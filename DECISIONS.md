@@ -1082,3 +1082,20 @@ and interpretation choices:
   tiny). The WAL-retry hack this replaces is removed. Recovery: .dump
   salvaged all 20 tasks and 52 of 60 result rows (opus control kept 19/20;
   the lost rows were judge verdicts and the interrupted deepseek re-run).
+
+## 2026-08-24 control aftermath: context fix and task curation
+
+- Definitive judged control: Opus 13/20 vs DeepSeek 8/20 (corrected regime),
+  Kimi 4/16 (old regime). Mechanical grading said Opus 2/20; the judge
+  flipped 11: Edward's "step 1 likely useless" verdict is confirmed and
+  recorded.
+- Opus's fails decomposed against the judge reasons: 3 real misses, 2
+  harness gaps, 2 unwinnable tasks. Fixes: (1) a touched test file now
+  drags the code it exercises into the request as labelled read-only
+  context (convention-based companion lookup for _test.go, .spec.js/ts,
+  Test.php), excluded from the reference, limits and characteristics; the
+  Opus control invented fictional APIs without it. (2) Tasks whose shipped
+  change records empirically measured results, or depends on system
+  knowledge a brief cannot carry, are deactivated with the evidence noted
+  in characteristics (tasks 7 and 17); a mechanical heuristic for
+  detecting these at seed time is future work.

@@ -251,6 +251,9 @@ func seedOneCommit(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions, sha 
 	var paths []string
 	var blocks []anthropic.ContentBlock
 	for i, tf := range touched {
+		if tf.ContextOnly {
+			continue
+		}
 		paths = append(paths, tf.Path)
 		id := fmt.Sprintf("toolu_seed_%d", i)
 		if tf.IsNew {
@@ -417,6 +420,11 @@ type seedTouchedFile struct {
 	NewContent    string
 	Hunks         []diffHunk
 	ChangedLines  int
+	// ContextOnly marks a file included for reference (the code a touched
+	// test exercises), not part of the change to reproduce. The Opus
+	// control invented fictional APIs on a test-writing task because the
+	// code under test was absent from the request.
+	ContextOnly bool
 }
 
 // buildSeedTouchedFiles resolves each changed file to a seedTouchedFile,
@@ -461,7 +469,76 @@ func buildSeedTouchedFiles(repoPath, parent, sha string, files []changedFile) ([
 			Path: f.Path, ParentContent: parentContent, Hunks: parsed.Hunks, ChangedLines: parsed.ChangedLines,
 		})
 	}
+
+	// A touched TEST file drags in the code it exercises as read-only
+	// context, best-effort by naming convention, so a test-writing task
+	// does not force the model to invent the API surface under test.
+	have := map[string]bool{}
+	for _, f := range out {
+		have[f.Path] = true
+	}
+	for _, f := range out {
+		if f.ContextOnly {
+			continue
+		}
+		for _, cand := range companionSourcePaths(f.Path) {
+			if have[cand] {
+				continue
+			}
+			content, err := showFile(repoPath, parent, cand)
+			if err != nil || content == "" {
+				continue
+			}
+			have[cand] = true
+			out = append(out, seedTouchedFile{Path: cand, ParentContent: content, ContextOnly: true})
+		}
+	}
 	return out, nil
+}
+
+// companionSourcePaths guesses, by naming convention, which source files a
+// test file exercises. Best-effort: wrong guesses cost context bytes, a
+// missing guess costs the model an invented API.
+func companionSourcePaths(path string) []string {
+	base := filepath.Base(path)
+	dir := filepath.Dir(path)
+	var out []string
+	switch {
+	case strings.HasSuffix(base, "_test.go"):
+		out = append(out, filepath.Join(dir, strings.TrimSuffix(base, "_test.go")+".go"))
+	case strings.HasSuffix(base, ".spec.js"), strings.HasSuffix(base, ".spec.ts"):
+		name := strings.TrimSuffix(strings.TrimSuffix(base, ".spec.js"), ".spec.ts")
+		// iznik-nuxt3 layout: tests/unit/<kind>/X.spec.js exercises
+		// <kind>/X.{vue,js,ts} at the repo component root.
+		if i := strings.Index(path, "tests/unit/"); i >= 0 {
+			rel := path[i+len("tests/unit/"):]
+			relDir := filepath.Dir(rel)
+			root := path[:strings.Index(path, "tests/unit/")]
+			for _, ext := range []string{".vue", ".js", ".ts"} {
+				out = append(out, filepath.Join(root, relDir, name+ext))
+			}
+		}
+		for _, ext := range []string{".vue", ".js", ".ts"} {
+			out = append(out, filepath.Join(dir, name+ext))
+		}
+	case strings.HasSuffix(base, "Test.php"):
+		name := strings.TrimSuffix(base, "Test.php") + ".php"
+		if i := strings.Index(path, "tests/"); i >= 0 {
+			root := path[:i]
+			rel := filepath.Dir(path[i+len("tests/"):])
+			// iznik-batch layout: tests/Unit/Services/XTest.php exercises
+			// app/Services/X.php.
+			for _, prefix := range []string{"app", "src"} {
+				trimmed := rel
+				for _, lead := range []string{"Unit/", "Feature/"} {
+					trimmed = strings.TrimPrefix(trimmed, lead)
+				}
+				out = append(out, filepath.Join(root, prefix, trimmed, name))
+			}
+		}
+		out = append(out, filepath.Join(dir, name))
+	}
+	return out
 }
 
 // buildSeedRequest assembles the synthesized Anthropic request: the
@@ -478,6 +555,9 @@ func buildSeedRequest(brief string, touched []seedTouchedFile, maxTokens int) (a
 	for _, f := range touched {
 		sb.WriteString("\n--- ")
 		sb.WriteString(f.Path)
+		if f.ContextOnly {
+			sb.WriteString(" (for reference: the code the tests exercise; you are not asked to change it)")
+		}
 		sb.WriteString(" ---\n")
 		if f.IsNew {
 			sb.WriteString("(new file, does not exist yet)\n")
