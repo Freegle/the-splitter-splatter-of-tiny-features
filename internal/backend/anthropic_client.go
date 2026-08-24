@@ -54,7 +54,14 @@ func (c *AnthropicClient) Complete(ctx context.Context, req anthropic.MessagesRe
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("anthropic-version", anthropicAPIVersion)
 	if key := lookupAPIKey(c.APIKeyEnv); key != "" {
-		httpReq.Header.Set("x-api-key", key)
+		// A subscription OAuth token from `claude setup-token` (prefix
+		// sk-ant-oat) authenticates as a Bearer token, not an API key.
+		if strings.HasPrefix(key, "sk-ant-oat") {
+			httpReq.Header.Set("Authorization", "Bearer "+key)
+			httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
+		} else {
+			httpReq.Header.Set("x-api-key", key)
+		}
 	}
 
 	resp, err := http.DefaultClient.Do(httpReq)

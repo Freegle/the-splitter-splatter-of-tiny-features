@@ -319,12 +319,19 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body, out any)
 }
 
 // setHeaders sets the headers every Message Batches API call needs:
-// anthropic-version always, and x-api-key when APIKeyEnv names a set,
-// non-empty environment variable.
+// anthropic-version always, plus auth when APIKeyEnv names a set, non-empty
+// environment variable. A subscription OAuth token from `claude setup-token`
+// (prefix sk-ant-oat) goes on Authorization: Bearer with the oauth beta
+// header; anything else is an API key and goes on x-api-key.
 func (c *Client) setHeaders(req *http.Request) {
 	req.Header.Set("anthropic-version", anthropicAPIVersion)
 	if key := lookupAPIKey(c.APIKeyEnv); key != "" {
-		req.Header.Set("x-api-key", key)
+		if strings.HasPrefix(key, "sk-ant-oat") {
+			req.Header.Set("Authorization", "Bearer "+key)
+			req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+		} else {
+			req.Header.Set("x-api-key", key)
+		}
 	}
 }
 

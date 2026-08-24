@@ -98,3 +98,22 @@ func TestAnthropicClient_Complete_ErrorBodySurfaced(t *testing.T) {
 		t.Errorf("err = %v, want it to mention the status code", err)
 	}
 }
+
+func TestAnthropicClientOAuthTokenAuth(t *testing.T) {
+	var gotAuth, gotBeta, gotKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotBeta = r.Header.Get("anthropic-beta")
+		gotKey = r.Header.Get("x-api-key")
+		w.Write([]byte(`{"content":[],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("SPLITTER_TEST_OAT", "sk-ant-oat01-abcdef")
+	c := &AnthropicClient{BaseURL: srv.URL, APIKeyEnv: "SPLITTER_TEST_OAT", Model: "m"}
+	if _, err := c.Complete(context.Background(), anthropic.MessagesRequest{Model: "m", MaxTokens: 16}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if gotAuth != "Bearer sk-ant-oat01-abcdef" || gotBeta != "oauth-2025-04-20" || gotKey != "" {
+		t.Fatalf("oauth token sent wrongly: auth=%q beta=%q x-api-key=%q", gotAuth, gotBeta, gotKey)
+	}
+}
