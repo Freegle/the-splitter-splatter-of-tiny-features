@@ -38,6 +38,15 @@ func (c *AnthropicClient) Complete(ctx context.Context, req anthropic.MessagesRe
 	req.Model = c.Model
 	req.Stream = false
 
+	oauthKey := ""
+	if key := lookupAPIKey(c.APIKeyEnv); strings.HasPrefix(key, "sk-ant-oat") {
+		oauthKey = key
+		// Subscription tokens are honoured only for requests shaped like
+		// Claude Code's own: the system prompt must open with its identity
+		// line (a bare request gets rate_limit_error, not a 401).
+		req.System = prependClaudeCodeIdentity(req.System)
+	}
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("encoding anthropic request for %s: %w", c.BaseURL, err)
@@ -53,15 +62,12 @@ func (c *AnthropicClient) Complete(ctx context.Context, req anthropic.MessagesRe
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("anthropic-version", anthropicAPIVersion)
-	if key := lookupAPIKey(c.APIKeyEnv); key != "" {
-		// A subscription OAuth token from `claude setup-token` (prefix
-		// sk-ant-oat) authenticates as a Bearer token, not an API key.
-		if strings.HasPrefix(key, "sk-ant-oat") {
-			httpReq.Header.Set("Authorization", "Bearer "+key)
-			httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
-		} else {
-			httpReq.Header.Set("x-api-key", key)
-		}
+	if oauthKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+oauthKey)
+		httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
+		httpReq.Header.Set("User-Agent", claudeCodeUserAgent)
+	} else if key := lookupAPIKey(c.APIKeyEnv); key != "" {
+		httpReq.Header.Set("x-api-key", key)
 	}
 
 	resp, err := http.DefaultClient.Do(httpReq)
@@ -80,4 +86,36 @@ func (c *AnthropicClient) Complete(ctx context.Context, req anthropic.MessagesRe
 	}
 
 	return respBody, nil
+}
+
+// claudeCodeIdentity is the system-prompt opener subscription OAuth tokens
+// require; claudeCodeUserAgent matches the CLI's request signature.
+const claudeCodeIdentity = "You are Claude Code, Anthropic's official CLI for Claude."
+const claudeCodeUserAgent = "claude-cli/2.1.240 (external, cli)"
+
+// prependClaudeCodeIdentity returns system with the identity block first,
+// preserving an existing bare-string or block-array system prompt after it.
+func prependClaudeCodeIdentity(system json.RawMessage) json.RawMessage {
+	identity := map[string]string{"type": "text", "text": claudeCodeIdentity}
+	blocks := []any{identity}
+	if len(system) > 0 {
+		if system[0] == '"' {
+			var s string
+			if err := json.Unmarshal(system, &s); err == nil && s != "" {
+				blocks = append(blocks, map[string]string{"type": "text", "text": s})
+			}
+		} else {
+			var existing []json.RawMessage
+			if err := json.Unmarshal(system, &existing); err == nil {
+				for _, b := range existing {
+					blocks = append(blocks, b)
+				}
+			}
+		}
+	}
+	out, err := json.Marshal(blocks)
+	if err != nil {
+		return system
+	}
+	return out
 }

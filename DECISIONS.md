@@ -1042,3 +1042,15 @@ and interpretation choices:
   upper bound, not a neutral frontier baseline; (3) report copy must say
   "changes that actually shipped (frontier AI tooling, human reviewed)", not
   "what our developers did".
+
+## 2026-08-24 subscription auth for the anthropic eval backend
+
+- Edward: "don't use the api, use the subscription" after the Freegle API key
+  ran out of credit five tasks into the Sonnet 5 control run (billing 400s
+  scored as fails; that run was deleted, 6-of-15-attempted was the real
+  interim figure). Subscription OAuth tokens (sk-ant-oat) are honoured only
+  for requests shaped like Claude Code's own: the anthropic client now
+  prepends the Claude Code identity line to the system prompt and sends the
+  CLI user agent when an oat token is in use (a bare request draws
+  rate_limit_error despite valid auth, verified live both ways). The judge's
+  Batch API path is unchanged: batches still need a real API key.

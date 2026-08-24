@@ -117,3 +117,32 @@ func TestAnthropicClientOAuthTokenAuth(t *testing.T) {
 		t.Fatalf("oauth token sent wrongly: auth=%q beta=%q x-api-key=%q", gotAuth, gotBeta, gotKey)
 	}
 }
+
+func TestAnthropicClientOAuthAddsClaudeCodeShape(t *testing.T) {
+	var gotUA string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Write([]byte(`{"content":[],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("SPLITTER_TEST_OAT2", "sk-ant-oat01-xyz")
+	c := &AnthropicClient{BaseURL: srv.URL, APIKeyEnv: "SPLITTER_TEST_OAT2", Model: "m"}
+	req := anthropic.MessagesRequest{Model: "m", MaxTokens: 16, System: json.RawMessage(`"original system"`)}
+	if _, err := c.Complete(context.Background(), req); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if gotUA != claudeCodeUserAgent {
+		t.Fatalf("user-agent %q, want %q", gotUA, claudeCodeUserAgent)
+	}
+	sys, ok := gotBody["system"].([]any)
+	if !ok || len(sys) != 2 {
+		t.Fatalf("system not a 2-block array: %v", gotBody["system"])
+	}
+	first := sys[0].(map[string]any)["text"].(string)
+	second := sys[1].(map[string]any)["text"].(string)
+	if first != claudeCodeIdentity || second != "original system" {
+		t.Fatalf("system blocks wrong: %q then %q", first, second)
+	}
+}
