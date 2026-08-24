@@ -34,7 +34,7 @@ func resolvedSeedContextBytes(cfg config.EvalsConfig) int {
 
 // seedSystemPrompt is the minimal coding-agent system prompt every
 // synthesized seed-history request carries.
-const seedSystemPrompt = `You are a coding agent working in this repository. Use the Edit tool to replace an exact old_string with a new_string in an existing file, the MultiEdit tool to apply several such replacements to one file in order, or the Write tool to create a new file with full content. Make the change described in the task using the current file contents shown below.`
+const seedSystemPrompt = `You are a coding agent working in this repository. Use the Edit tool to replace an exact old_string with a new_string in an existing file, the MultiEdit tool to apply several such replacements to one file in order, or the Write tool to create a new file with full content. Make the change described in the task using the current file contents shown below. This project requires tests: when you change production code, update or add the corresponding tests in the same response (test files are included below when they exist). Follow the conventions you see in the current file contents.`
 
 // seedToolDefs are the Edit/MultiEdit/Write tool definitions every
 // synthesized seed-history request carries.

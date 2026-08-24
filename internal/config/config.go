@@ -77,6 +77,10 @@ type EvalsConfig struct {
 	// backend's reasoning tokens bill as output and can exhaust a low
 	// max_tokens budget before producing any answer at all.
 	MaxAnswerTokens int `toml:"max_answer_tokens"`
+	// JudgeModel is the model eval judge-fails grades with; the judge
+	// verdict is the deciding eval grade (mechanical similarity is a
+	// diagnostic only).
+	JudgeModel string `toml:"judge_model"`
 
 	// SeedContextBytes caps a seed-history synthesized request's total
 	// marshaled size; a commit whose touched-file context exceeds it is
@@ -193,6 +197,7 @@ func Default() *Config {
 			MaxTaskTokens:            200000,
 			WallClockMinutes:         10,
 			MaxAnswerTokens:          16384,
+			JudgeModel:               "claude-opus-5",
 			SeedContextBytes:         65536,
 		},
 		ModelCutoffs: map[string]string{},

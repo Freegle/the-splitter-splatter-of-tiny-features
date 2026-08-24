@@ -248,6 +248,7 @@ CREATE TABLE IF NOT EXISTS eval_results (
   regressions INTEGER,                  -- agentic mode: previously-passing tests in the task package that failed in final grading
   transcript_zstd BLOB,                 -- agentic mode: the full tool-loop transcript
   cheat_flags TEXT,                     -- agentic mode: JSON array of {"type","detail"} leakage-containment flags
+  judge_verdict TEXT,                   -- eval judge-fails: {"equivalent","confidence","reason"} when a failed result was re-graded by the judge
   UNIQUE(eval_run_id, eval_task_id)
 );
 `

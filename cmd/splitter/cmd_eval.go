@@ -29,7 +29,7 @@ func init() {
 // runEval dispatches to the eval sub-command named by args[0].
 func runEval(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: splitter eval <harvest|add|seed-history|reverse-briefs|run|list> [args]")
+		return fmt.Errorf("usage: splitter eval <harvest|add|seed-history|reverse-briefs|run|list|refresh-requests|judge-fails> [args]")
 	}
 
 	switch args[0] {
@@ -45,8 +45,12 @@ func runEval(args []string) error {
 		return runEvalRun(args[1:])
 	case "list":
 		return runEvalList(args[1:])
+	case "refresh-requests":
+		return runEvalRefreshRequests(args[1:])
+	case "judge-fails":
+		return runEvalJudgeFails(args[1:])
 	default:
-		return fmt.Errorf("unknown eval sub-command %q, want harvest, add, seed-history, reverse-briefs, run or list", args[0])
+		return fmt.Errorf("unknown eval sub-command %q, want harvest, add, seed-history, reverse-briefs, run, list, refresh-requests or judge-fails", args[0])
 	}
 }
 

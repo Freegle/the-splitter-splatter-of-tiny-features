@@ -1054,3 +1054,19 @@ and interpretation choices:
   CLI user agent when an oat token is in use (a bare request draws
   rate_limit_error despite valid auth, verified live both ways). The judge's
   Batch API path is unchanged: batches still need a real API key.
+
+## 2026-08-24 judge decides, opus codes and judges
+
+- Control-run verdict acted on. Edward: "step 1 likely useless - decide based
+  on step 2 results. coding should use opus not sonnet, judge using opus
+  too." Changes: eval grading now judges EVERY scored non-exact result (pass
+  or fail alike) and the judge verdict IS the grade; mechanical similarity
+  stays recorded as a diagnostic. The judge instruction encodes the house
+  rule that omitted tests are a failure (Edward: "not writing tests is a
+  failure though"), and the seed system prompt now STATES that requirement to
+  the model under eval (it was previously unstated while the references
+  included tests). eval refresh-requests rebuilds seeded requests in place so
+  the prompt fix reaches existing tasks without discarding reversed briefs.
+  Control model and judge default: claude-opus-5. Self-family judge bias
+  (Claude judging Claude against Claude-authored references) is recorded as
+  an open risk; -model enables a cross-family judge check.

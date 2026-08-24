@@ -540,3 +540,65 @@ func nilIfEmptyBytes(b []byte) []byte {
 	}
 	return b
 }
+
+// UpdateEvalTaskRequest replaces one task's frozen synthesized request
+// (eval refresh-requests: prompt-template changes reach seeded tasks
+// without discarding their briefs).
+func UpdateEvalTaskRequest(db *sql.DB, id int64, requestZstd []byte) error {
+	if _, err := db.Exec(`UPDATE eval_tasks SET request_zstd = ? WHERE id = ?`, requestZstd, id); err != nil {
+		return fmt.Errorf("updating eval task %d request: %w", id, err)
+	}
+	return nil
+}
+
+// FailedUnjudgedEvalResultRow is one failed eval result awaiting judge
+// re-grading (eval judge-fails).
+type FailedUnjudgedEvalResultRow struct {
+	ID           int64
+	EvalRunID    int64
+	EvalTaskID   int64
+	Passed       int
+	ResponseZstd []byte
+}
+
+// FailedUnjudgedEvalResults returns scored, error-free eval results that
+// have no judge verdict yet, for runID, or for every run when runID is 0.
+// Mechanical exact matches (stage='exact') are excluded: byte-equality
+// needs no judge. Everything else, passes included, goes to the judge:
+// the judge verdict is the deciding grade (mechanical similarity is
+// recorded as a diagnostic only).
+func FailedUnjudgedEvalResults(db *sql.DB, runID int64) ([]FailedUnjudgedEvalResultRow, error) {
+	q := `SELECT id, eval_run_id, eval_task_id, passed, response_zstd FROM eval_results
+WHERE passed IS NOT NULL AND (error IS NULL OR error = '')
+  AND COALESCE(stage, '') != 'exact'
+  AND (judge_verdict IS NULL OR judge_verdict = '')
+  AND response_zstd IS NOT NULL`
+	args := []any{}
+	if runID != 0 {
+		q += ` AND eval_run_id = ?`
+		args = append(args, runID)
+	}
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying failed unjudged eval results: %w", err)
+	}
+	defer rows.Close()
+	var out []FailedUnjudgedEvalResultRow
+	for rows.Next() {
+		var r FailedUnjudgedEvalResultRow
+		if err := rows.Scan(&r.ID, &r.EvalRunID, &r.EvalTaskID, &r.Passed, &r.ResponseZstd); err != nil {
+			return nil, fmt.Errorf("scanning failed unjudged eval result: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ApplyEvalJudgeVerdict records a judge verdict on one eval result,
+// updating passed accordingly and marking the deciding stage "judge".
+func ApplyEvalJudgeVerdict(db *sql.DB, id int64, passed int, verdictJSON string) error {
+	if _, err := db.Exec(`UPDATE eval_results SET passed = ?, judge_verdict = ?, stage = 'judge' WHERE id = ?`, passed, verdictJSON, id); err != nil {
+		return fmt.Errorf("applying judge verdict to eval result %d: %w", id, err)
+	}
+	return nil
+}
