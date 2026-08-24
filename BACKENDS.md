@@ -63,6 +63,30 @@ The ladder climbs per language track until futility, so the scorecard directly
 answers the ceiling question, split by post/pre-cutoff segments (DeepSeek V4
 family cutoff needs adding to [model_cutoffs] when published).
 
+## DeepSeek V4 Flash cost estimate (2026-08-24, at $0.14 in / $0.28 out per MTok)
+
+Reasoning tokens bill as OUTPUT, and Flash reasons on everything (our 3-word probe
+cost ~100 tokens), so output estimates below are inflated 2-3x over a non-reasoning
+model on purpose. Cutoff: not officially published; V4 released April 2026, so
+[model_cutoffs] should carry 2026-03 as a conservative guess until DeepSeek states
+one; our Aug-2026 seed commits stay safely post-cutoff either way.
+
+| Workload | Assumption per task/call | Cost |
+|---|---|---|
+| Single-turn eval | ~6k in + ~3k out | ~$0.002/task; full 100-task ladder ~$0.20 |
+| Agentic eval | worst case 20 turns, ~300k in + 40k out | ~$0.05/task cap; typical ~8 turns ~$0.02; 100 tasks ~$2-5 |
+| Replay corpus | real Claude Code contexts, ~30k in + 1k out | ~$0.005/call; 100/night ~$0.45; ~$14/month |
+
+Practical read: evaluating "how bright can it get" costs pocket change; even using
+Flash as a full nightly replay backend is ~$14/month, an order of magnitude under
+any subscription. The real bill guards are the ladder futility stop, the agentic
+-max-tokens cap, and the eval_runs token accounting, all of which report actuals so
+these estimates get replaced by measured numbers after the first run. DeepSeek has
+historically offered off-peak discounts; unverified for V4, check before scheduling
+nightly replay timing. NOTE for the pricing table in the spend report: add a
+deepseek family entry ($0.14/$0.28); without it the fallback assumes Opus pricing
+and overstates DeepSeek spend ~35x.
+
 ## Recommendation (2026-08-24)
 
 1. Keep replay on local qwen3-coder:30b (free) alongside qwen2.5-coder:7b; both are
