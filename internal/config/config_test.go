@@ -49,7 +49,7 @@ func TestDefault(t *testing.T) {
 	if got := cfg.Layers["Makefile"]; got != "build" {
 		t.Errorf(`Layers["Makefile"] = %q, want "build"`, got)
 	}
-	wantLayerCount := 20
+	wantLayerCount := 21
 	if len(cfg.Layers) != wantLayerCount {
 		t.Errorf("len(Layers) = %d, want %d", len(cfg.Layers), wantLayerCount)
 	}

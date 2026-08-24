@@ -24,9 +24,45 @@ import (
 // eval_results has no such enum constraint).
 const bandStage = "band"
 
-// replayFunc sends req to a backend under test and returns its response as
-// a complete Anthropic message JSON plus the call's token usage.
-type replayFunc func(ctx context.Context, req anthropic.MessagesRequest) (responseJSON []byte, tokensIn, tokensOut int64, err error)
+// defaultMaxAnswerTokens is applied when [evals].max_answer_tokens is
+// unset (a zero-valued config.EvalsConfig), mirroring NewLadder's own
+// "zero cfg field falls back to the stated default" convention.
+const defaultMaxAnswerTokens = 16384
+
+// resolvedMaxAnswerTokens returns cfg's configured max_answer_tokens,
+// falling back to defaultMaxAnswerTokens when unset.
+func resolvedMaxAnswerTokens(cfg config.EvalsConfig) int {
+	if cfg.MaxAnswerTokens > 0 {
+		return cfg.MaxAnswerTokens
+	}
+	return defaultMaxAnswerTokens
+}
+
+// applyMaxAnswerTokensFloor raises req.MaxTokens to cfg's resolved
+// max_answer_tokens when the request's own stored value is lower (this
+// covers both an absent max_tokens and an old, too-low one from before
+// this floor existed, so already-seeded tasks are fixed without
+// re-seeding). A request that already asks for more is left alone.
+//
+// Discovered live against DeepSeek V4 Flash (a reasoning model): its
+// reasoning tokens bill as output, so a synthesized request with no
+// max_tokens fell through to internal/backend.ToOpenAI's own 4096
+// default and was exhausted by reasoning before any answer was produced,
+// stop_reason=max_tokens with zero content blocks, wrongly scored as a
+// model failure. See DECISIONS.md.
+func applyMaxAnswerTokensFloor(req *anthropic.MessagesRequest, cfg config.EvalsConfig) {
+	floor := resolvedMaxAnswerTokens(cfg)
+	if req.MaxTokens < floor {
+		req.MaxTokens = floor
+	}
+}
+
+// ReplayFunc sends req to a backend under test and returns its response as
+// a complete Anthropic message JSON plus the call's token usage. Exported so
+// internal/agentic can drive the same backend resolution (BuildRunBackend)
+// its own tool loop needs, without duplicating the anthropic-vs-OpenAI-
+// compatible client selection and translation this package already does.
+type ReplayFunc func(ctx context.Context, req anthropic.MessagesRequest) (responseJSON []byte, tokensIn, tokensOut int64, err error)
 
 // RunOptions controls one `eval run` invocation.
 type RunOptions struct {
@@ -115,7 +151,7 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config, opts RunOptions) (
 		return nil, fmt.Errorf("eval run: -backend is required")
 	}
 
-	model, doReplay, err := buildRunBackend(cfg, opts)
+	model, doReplay, err := BuildRunBackend(cfg, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -150,19 +186,19 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config, opts RunOptions) (
 
 	summary := &RunSummary{RunID: runID, Backend: opts.Backend, Model: model, TasksTotal: len(tasks)}
 
-	scheduled := scheduleTasks(tasks, cfg.Evals.LadderTrack)
+	scheduled := ScheduleTasks(tasks, cfg.Evals.LadderTrack)
 
 	var tokensIn, tokensOut int64
 	budgetExceeded := false
 
 	for _, st := range scheduled {
-		t := st.task
+		t := st.Task
 		c := ParseCharacteristics(t.Characteristics.String)
 		if c.BriefSource != "" {
 			briefSources[c.BriefSource]++
 		}
 
-		if budgetExceeded || !ladder.Allowed(st.track, st.rung) {
+		if budgetExceeded || !ladder.Allowed(st.Track, st.Rung) {
 			if _, err := store.InsertEvalResult(db, store.EvalResultRow{
 				EvalRunID:  runID,
 				EvalTaskID: t.ID,
@@ -193,7 +229,7 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config, opts RunOptions) (
 			return nil, fmt.Errorf("recording eval result for task %d: %w", t.ID, err)
 		}
 
-		ladder.Record(st.track, st.rung, passed)
+		ladder.Record(st.Track, st.Rung, passed)
 		summary.TasksScored++
 		if passed {
 			summary.TasksPassed++
@@ -232,31 +268,33 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config, opts RunOptions) (
 	return summary, nil
 }
 
-// scheduledTask pairs one active task with its ladder track/rung.
-type scheduledTask struct {
-	task  store.EvalTaskRow
-	track string
-	rung  int
+// ScheduledTask pairs one active task with its ladder track/rung. Exported
+// so internal/agentic can reuse the same scheduling (and thus the same
+// ladder climb order) for its own task set.
+type ScheduledTask struct {
+	Task  store.EvalTaskRow
+	Track string
+	Rung  int
 }
 
-// scheduleTasks computes each task's ladder track/rung and sorts by
-// (track, rung, id) ascending, the order eval run climbs.
-func scheduleTasks(tasks []store.EvalTaskRow, ladderTrack string) []scheduledTask {
-	out := make([]scheduledTask, 0, len(tasks))
+// ScheduleTasks computes each task's ladder track/rung and sorts by
+// (track, rung, id) ascending, the order eval run (and eval-agentic) climbs.
+func ScheduleTasks(tasks []store.EvalTaskRow, ladderTrack string) []ScheduledTask {
+	out := make([]ScheduledTask, 0, len(tasks))
 	for _, t := range tasks {
 		c := ParseCharacteristics(t.Characteristics.String)
 		track := Track(ladderTrack, t.Language.String, t.Layer.String)
 		rung := Rung(t.Difficulty.String, t.TurnType.String, c.Size.ContextBytes)
-		out = append(out, scheduledTask{task: t, track: track, rung: rung})
+		out = append(out, ScheduledTask{Task: t, Track: track, Rung: rung})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].track != out[j].track {
-			return out[i].track < out[j].track
+		if out[i].Track != out[j].Track {
+			return out[i].Track < out[j].Track
 		}
-		if out[i].rung != out[j].rung {
-			return out[i].rung < out[j].rung
+		if out[i].Rung != out[j].Rung {
+			return out[i].Rung < out[j].Rung
 		}
-		return out[i].task.ID < out[j].task.ID
+		return out[i].Task.ID < out[j].Task.ID
 	})
 	return out
 }
@@ -266,7 +304,7 @@ func scheduleTasks(tasks []store.EvalTaskRow, ladderTrack string) []scheduledTas
 // verification error both count as not passed with the error text
 // recorded (there is no "unscored" outcome for an attempted task, only
 // ladder_skipped for a task never attempted at all).
-func scoreOneTask(ctx context.Context, verifier *verify.Verifier, cfg *config.Config, doReplay replayFunc, t store.EvalTaskRow) (passed bool, stage string, similarity float64, resultErr string, respCompressed []byte, tokensIn, tokensOut int64, err error) {
+func scoreOneTask(ctx context.Context, verifier *verify.Verifier, cfg *config.Config, doReplay ReplayFunc, t store.EvalTaskRow) (passed bool, stage string, similarity float64, resultErr string, respCompressed []byte, tokensIn, tokensOut int64, err error) {
 	reqJSON, derr := store.Decompress(t.RequestZstd)
 	if derr != nil {
 		return false, "", 0, fmt.Sprintf("decompressing request: %v", derr), nil, 0, 0, nil
@@ -275,6 +313,7 @@ func scoreOneTask(ctx context.Context, verifier *verify.Verifier, cfg *config.Co
 	if jerr := json.Unmarshal(reqJSON, &req); jerr != nil {
 		return false, "", 0, fmt.Sprintf("decoding request: %v", jerr), nil, 0, 0, nil
 	}
+	applyMaxAnswerTokensFloor(&req, cfg.Evals)
 
 	respJSON, tin, tout, callErr := doReplay(ctx, req)
 	if callErr != nil {
@@ -358,11 +397,14 @@ func computeRegressions(db *sql.DB, priorRunID, currentRunID int64) ([]Regressio
 	return regressions, nil
 }
 
-// buildRunBackend resolves opts into a resolved model name and a
-// replayFunc: the special "anthropic" backend name selects the native
+// BuildRunBackend resolves opts into a resolved model name and a
+// ReplayFunc: the special "anthropic" backend name selects the native
 // Anthropic Messages API client (DESIGN.md: "for eval runs only, live
-// routing never uses it"), any other name looks up cfg.Backends.
-func buildRunBackend(cfg *config.Config, opts RunOptions) (model string, doReplay replayFunc, err error) {
+// routing never uses it"), any other name looks up cfg.Backends. Exported
+// so internal/agentic's tool loop can drive the same backend resolution
+// (DESIGN.md "Agentic eval mode": "-backend anthropic -model <id>" selects
+// the same minimal native client) instead of duplicating it.
+func BuildRunBackend(cfg *config.Config, opts RunOptions) (model string, doReplay ReplayFunc, err error) {
 	if opts.Backend == "anthropic" {
 		if opts.Model == "" {
 			return "", nil, fmt.Errorf("-model is required when -backend anthropic")

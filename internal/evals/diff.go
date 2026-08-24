@@ -152,15 +152,17 @@ func buildSeedReferenceMessage(blocks []anthropic.ContentBlock) ([]byte, error) 
 	return b, nil
 }
 
-// applyReconstructedEdits applies content's Edit/MultiEdit/Write tool_use
+// ApplyReconstructedEdits applies content's Edit/MultiEdit/Write tool_use
 // blocks to originalContent, literal old_string -> new_string replacement
 // (first occurrence only, matching internal/verify's non-replace_all
-// semantics), in block order. It exists so this package's own tests can
-// confirm a seed-history reference response reapplies to reproduce a
+// semantics), in block order. Originally added so this package's own tests
+// could confirm a seed-history reference response reapplies to reproduce a
 // commit's actual post-state content exactly (DESIGN.md's round-trip
-// requirement); nothing in the production eval run/harvest path calls it,
-// since scoring a candidate model's response is internal/verify's job.
-func applyReconstructedEdits(originalContent string, blocks []anthropic.ContentBlock) (string, error) {
+// requirement); exported so internal/agentic's suspect_copy detector can
+// reuse it too, to reconstruct the withheld reference fix's final file
+// content from a task's frozen reference_response_zstd without duplicating
+// this apply logic.
+func ApplyReconstructedEdits(originalContent string, blocks []anthropic.ContentBlock) (string, error) {
 	content := originalContent
 	for _, b := range blocks {
 		if b.Type != anthropic.BlockToolUse {

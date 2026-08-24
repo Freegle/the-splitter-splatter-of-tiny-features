@@ -73,6 +73,8 @@ futility_consecutive_fails = 6     # or abandon immediately after this many cons
 max_turns = 20                     # agentic eval mode: max tool-loop turns per task
 max_task_tokens = 200000           # agentic eval mode: max input+output tokens per task
 wall_clock_minutes = 10            # agentic eval mode: max wall clock per task
+max_answer_tokens = 16384          # floors every eval request's max_tokens (reasoning models bill reasoning as output)
+seed_context_bytes = 65536         # cap on a seed-history synthesized request's total size
 
 [model_cutoffs]
 # family or exact model id -> training data cutoff "YYYY-MM", the eval
@@ -96,6 +98,7 @@ wall_clock_minutes = 10            # agentic eval mode: max wall clock per task
 "*.vue" = "frontend-ui"
 "*.css" = "frontend-ui"
 "iznik-server-go/" = "backend-api"
+"iznik-batch/" = "backend-api"
 "*api*/" = "backend-api"
 "*handler*.go" = "backend-api"
 "migrations/" = "database"

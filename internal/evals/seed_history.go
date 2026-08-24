@@ -16,9 +16,21 @@ import (
 	"github.com/freegle/splitter/internal/store"
 )
 
-// seedContextCapBytes bounds a synthesized seed-history request's total
-// marshaled size, per DESIGN.md.
-const seedContextCapBytes = 20 * 1024
+// defaultSeedContextBytes is applied when [evals].seed_context_bytes is
+// unset. DESIGN.md originally pinned this at 20KB; raised to 64KB after
+// real hand-picked seed commits showed a single touched source file alone
+// can exceed 20KB, needlessly skipping otherwise-eligible commits (see
+// DECISIONS.md).
+const defaultSeedContextBytes = 64 * 1024
+
+// resolvedSeedContextBytes returns cfg's configured seed_context_bytes,
+// falling back to defaultSeedContextBytes when unset.
+func resolvedSeedContextBytes(cfg config.EvalsConfig) int {
+	if cfg.SeedContextBytes > 0 {
+		return cfg.SeedContextBytes
+	}
+	return defaultSeedContextBytes
+}
 
 // seedSystemPrompt is the minimal coding-agent system prompt every
 // synthesized seed-history request carries.
@@ -246,7 +258,7 @@ func seedOneCommit(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions, sha 
 
 	brief := seedBrief(meta.Subject, meta.Body)
 
-	req, err := buildSeedRequest(brief, touched)
+	req, err := buildSeedRequest(brief, touched, resolvedMaxAnswerTokens(cfg.Evals))
 	if err != nil {
 		return false, skipNone, err
 	}
@@ -254,7 +266,7 @@ func seedOneCommit(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions, sha 
 	if err != nil {
 		return false, skipNone, fmt.Errorf("marshaling synthesized request: %w", err)
 	}
-	if len(reqJSON) > seedContextCapBytes {
+	if len(reqJSON) > resolvedSeedContextBytes(cfg.Evals) {
 		return false, skipContextCap, nil
 	}
 
@@ -276,6 +288,20 @@ func seedOneCommit(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions, sha 
 	specClarity, specEvidence := SpecClarity(brief, paths)
 	framework := Framework(paths, language, seedContentSample(touched))
 
+	var holdoutCompressed []byte
+	agenticTestCmd := ""
+	if holdout, hasHoldout := buildHoldoutPayload(touched, cfg.Layers); hasHoldout {
+		holdoutJSON, herr := json.Marshal(holdout)
+		if herr != nil {
+			return false, skipNone, fmt.Errorf("marshaling holdout payload: %w", herr)
+		}
+		holdoutCompressed, err = store.Compress(holdoutJSON)
+		if err != nil {
+			return false, skipNone, fmt.Errorf("compressing holdout payload: %w", err)
+		}
+		agenticTestCmd = holdout.TestCmd
+	}
+
 	turnType := feature.TurnSingleFileEdit
 	if len(paths) >= 2 {
 		turnType = feature.TurnMultiFileEdit
@@ -283,13 +309,14 @@ func seedOneCommit(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions, sha 
 	subsystem := feature.Subsystem(paths)
 
 	characteristics := Characteristics{
-		Framework:    framework,
-		SpecClarity:  specClarity,
-		Size:         Size{Files: len(paths), DiffLines: totalDiffLines, ContextBytes: len(reqJSON)},
-		TaskDate:     meta.AuthorDate.Format(time.RFC3339),
-		Localization: LocalizationGiven,
-		BriefSource:  BriefSourceCommitSubject,
-		CommitSHA:    sha,
+		Framework:      framework,
+		SpecClarity:    specClarity,
+		Size:           Size{Files: len(paths), DiffLines: totalDiffLines, ContextBytes: len(reqJSON)},
+		TaskDate:       meta.AuthorDate.Format(time.RFC3339),
+		Localization:   LocalizationGiven,
+		BriefSource:    BriefSourceCommitSubject,
+		CommitSHA:      sha,
+		AgenticTestCmd: agenticTestCmd,
 		Evidence: map[string]string{
 			"spec_clarity": specEvidence,
 			"difficulty":   difficultyEvidence,
@@ -322,6 +349,7 @@ func seedOneCommit(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions, sha 
 		Nature:                sql.NullString{String: nature, Valid: nature != ""},
 		Difficulty:            sql.NullString{String: difficulty, Valid: difficulty != ""},
 		Characteristics:       sql.NullString{String: characteristics.JSON(), Valid: true},
+		HoldoutTestsZstd:      holdoutCompressed,
 	}
 	_, didInsert, err := store.InsertEvalTask(db, row)
 	if err != nil {
@@ -420,8 +448,11 @@ func buildSeedTouchedFiles(repoPath, parent, sha string, files []changedFile) ([
 // buildSeedRequest assembles the synthesized Anthropic request: the
 // minimal coding-agent system prompt, the brief plus each touched file's
 // parent-state content (or a "new file" marker), and the Edit/MultiEdit/
-// Write tool definitions.
-func buildSeedRequest(brief string, touched []seedTouchedFile) (anthropic.MessagesRequest, error) {
+// Write tool definitions. maxTokens is the request's max_tokens (the
+// caller resolves it from [evals].max_answer_tokens, see DECISIONS.md: a
+// synthesized request with too low a max_tokens can be exhausted by a
+// reasoning backend's own reasoning tokens before any answer).
+func buildSeedRequest(brief string, touched []seedTouchedFile, maxTokens int) (anthropic.MessagesRequest, error) {
 	var sb strings.Builder
 	sb.WriteString(brief)
 	sb.WriteString("\n\nCurrent contents of the files you may need to change:\n")
@@ -451,7 +482,7 @@ func buildSeedRequest(brief string, touched []seedTouchedFile) (anthropic.Messag
 			{Role: "user", Content: []anthropic.ContentBlock{{Type: anthropic.BlockText, Text: sb.String()}}},
 		},
 		Tools:     seedToolDefs,
-		MaxTokens: 4096,
+		MaxTokens: maxTokens,
 	}, nil
 }
 

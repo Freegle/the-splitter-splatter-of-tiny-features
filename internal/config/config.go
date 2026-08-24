@@ -69,6 +69,19 @@ type EvalsConfig struct {
 	MaxTaskTokens int64 `toml:"max_task_tokens"`
 	// WallClockMinutes bounds one agentic task's wall clock time.
 	WallClockMinutes int `toml:"wall_clock_minutes"`
+
+	// MaxAnswerTokens floors every eval request's max_tokens (synthesized
+	// seed-history/harvest requests, and a run-time floor `eval run`/
+	// `eval-agentic` applies to whatever a stored request already carries,
+	// so already-seeded tasks are fixed without re-seeding). A reasoning
+	// backend's reasoning tokens bill as output and can exhaust a low
+	// max_tokens budget before producing any answer at all.
+	MaxAnswerTokens int `toml:"max_answer_tokens"`
+
+	// SeedContextBytes caps a seed-history synthesized request's total
+	// marshaled size; a commit whose touched-file context exceeds it is
+	// skipped (skipContextCap).
+	SeedContextBytes int `toml:"seed_context_bytes"`
 }
 
 // ReplayConfig controls the Phase 3 replay worker.
@@ -179,6 +192,8 @@ func Default() *Config {
 			MaxTurns:                 20,
 			MaxTaskTokens:            200000,
 			WallClockMinutes:         10,
+			MaxAnswerTokens:          16384,
+			SeedContextBytes:         65536,
 		},
 		ModelCutoffs: map[string]string{},
 	}
@@ -194,6 +209,7 @@ func defaultLayers() map[string]string {
 		"*.vue":            "frontend-ui",
 		"*.css":            "frontend-ui",
 		"iznik-server-go/": "backend-api",
+		"iznik-batch/":     "backend-api",
 		"*api*/":           "backend-api",
 		"*handler*.go":     "backend-api",
 		"migrations/":      "database",

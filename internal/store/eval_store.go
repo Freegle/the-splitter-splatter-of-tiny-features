@@ -24,27 +24,38 @@ type EvalTaskRow struct {
 	Difficulty            sql.NullString
 	Characteristics       sql.NullString
 	Active                bool
+	// HoldoutTestsZstd is agentic eval mode's held-out test-file payload
+	// (see internal/evals.SplitTestFiles), nil for a task with none.
+	HoldoutTestsZstd []byte
+	// AgenticReady is agentic eval mode's last sandbox dependency prep
+	// outcome: NULL (Valid false) when never attempted.
+	AgenticReady sql.NullInt64
 }
 
 const evalTaskColumns = `id, created_ts, call_id, repo_head, brief, turn_type, subsystem, frontier_model,
-       request_zstd, reference_response_zstd, origin, language, layer, nature, difficulty, characteristics, active`
+       request_zstd, reference_response_zstd, origin, language, layer, nature, difficulty, characteristics, active,
+       holdout_tests_zstd, agentic_ready`
 
 // InsertEvalTask inserts row into eval_tasks. When a row with the same
 // (call_id, origin) already exists (the harvester's dedup key), no row is
 // inserted and inserted is false; this is not an error, since re-running
 // harvest over already-seen calls is expected. row.Active is ignored on
 // insert: the table's own DEFAULT 1 applies, so a caller that forgets to
-// set it never accidentally inserts an inactive task.
+// set it never accidentally inserts an inactive task. row.AgenticReady is
+// also ignored on insert: it is only ever set later, by a sandbox
+// dependency prep attempt (UpdateEvalTaskAgenticReady).
 func InsertEvalTask(db *sql.DB, row EvalTaskRow) (id int64, inserted bool, err error) {
 	res, err := db.Exec(`
 INSERT INTO eval_tasks (
   created_ts, call_id, repo_head, brief, turn_type, subsystem, frontier_model,
-  request_zstd, reference_response_zstd, origin, language, layer, nature, difficulty, characteristics
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  request_zstd, reference_response_zstd, origin, language, layer, nature, difficulty, characteristics,
+  holdout_tests_zstd
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(call_id, origin) DO NOTHING`,
 		row.CreatedTS, row.CallID, row.RepoHead, row.Brief, row.TurnType, row.Subsystem, row.FrontierModel,
 		row.RequestZstd, nilIfEmptyBytes(row.ReferenceResponseZstd), row.Origin,
 		row.Language, row.Layer, row.Nature, row.Difficulty, row.Characteristics,
+		nilIfEmptyBytes(row.HoldoutTestsZstd),
 	)
 	if err != nil {
 		return 0, false, fmt.Errorf("inserting eval task (origin %s): %w", row.Origin, err)
@@ -127,7 +138,7 @@ func scanEvalTaskRow(row *sql.Row) (*EvalTaskRow, error) {
 	if err := row.Scan(
 		&t.ID, &t.CreatedTS, &t.CallID, &t.RepoHead, &t.Brief, &t.TurnType, &t.Subsystem, &t.FrontierModel,
 		&t.RequestZstd, &t.ReferenceResponseZstd, &t.Origin, &t.Language, &t.Layer, &t.Nature, &t.Difficulty,
-		&t.Characteristics, &active,
+		&t.Characteristics, &active, &t.HoldoutTestsZstd, &t.AgenticReady,
 	); err != nil {
 		return nil, err
 	}
@@ -143,7 +154,7 @@ func scanEvalTaskRows(rows *sql.Rows) ([]EvalTaskRow, error) {
 		if err := rows.Scan(
 			&t.ID, &t.CreatedTS, &t.CallID, &t.RepoHead, &t.Brief, &t.TurnType, &t.Subsystem, &t.FrontierModel,
 			&t.RequestZstd, &t.ReferenceResponseZstd, &t.Origin, &t.Language, &t.Layer, &t.Nature, &t.Difficulty,
-			&t.Characteristics, &active,
+			&t.Characteristics, &active, &t.HoldoutTestsZstd, &t.AgenticReady,
 		); err != nil {
 			return nil, fmt.Errorf("scanning eval task row: %w", err)
 		}
@@ -218,26 +229,47 @@ FROM eval_runs WHERE model != ? AND id < ? ORDER BY id DESC LIMIT 1`, model, bef
 	return &r, nil
 }
 
-// EvalResultRow mirrors one row of the eval_results table.
+// EvalResultRow mirrors one row of the eval_results table. Mode, Turns,
+// TestsRan, TestsPassed, Regressions, TranscriptZstd and CheatFlags are
+// agentic eval mode fields (internal/agentic); a single-turn caller that
+// leaves Mode empty gets the table's 'single' default and every other
+// agentic field stored NULL.
 type EvalResultRow struct {
-	ID           int64
-	EvalRunID    int64
-	EvalTaskID   int64
-	Passed       sql.NullInt64
-	Stage        sql.NullString
-	Similarity   sql.NullFloat64
-	ResponseZstd []byte
-	Error        sql.NullString
+	ID             int64
+	EvalRunID      int64
+	EvalTaskID     int64
+	Passed         sql.NullInt64
+	Stage          sql.NullString
+	Similarity     sql.NullFloat64
+	ResponseZstd   []byte
+	Error          sql.NullString
+	Mode           string
+	Turns          sql.NullInt64
+	TestsRan       sql.NullInt64
+	TestsPassed    sql.NullInt64
+	Regressions    sql.NullInt64
+	TranscriptZstd []byte
+	CheatFlags     sql.NullString
 }
 
 // InsertEvalResult inserts row into eval_results and returns the new row's
-// id. Passed is nil for a ladder_skipped row (never scored).
+// id. Passed is nil for a ladder_skipped row (never scored). An empty
+// row.Mode is stored as 'single' (the table's own DEFAULT does not apply
+// once the column is named in the INSERT list).
 func InsertEvalResult(db *sql.DB, row EvalResultRow) (int64, error) {
+	mode := row.Mode
+	if mode == "" {
+		mode = "single"
+	}
 	res, err := db.Exec(`
-INSERT INTO eval_results (eval_run_id, eval_task_id, passed, stage, similarity, response_zstd, error)
-VALUES (?, ?, ?, ?, ?, ?, ?)`,
+INSERT INTO eval_results (
+  eval_run_id, eval_task_id, passed, stage, similarity, response_zstd, error,
+  mode, turns, tests_ran, tests_passed, regressions, transcript_zstd, cheat_flags
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.EvalRunID, row.EvalTaskID, row.Passed, row.Stage, row.Similarity,
 		nilIfEmptyBytes(row.ResponseZstd), row.Error,
+		mode, row.Turns, row.TestsRan, row.TestsPassed, row.Regressions,
+		nilIfEmptyBytes(row.TranscriptZstd), row.CheatFlags,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("inserting eval result for task %d: %w", row.EvalTaskID, err)
@@ -249,20 +281,27 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 	return id, nil
 }
 
+const evalResultColumns = `id, eval_run_id, eval_task_id, passed, stage, similarity, response_zstd, error,
+       mode, turns, tests_ran, tests_passed, regressions, transcript_zstd, cheat_flags`
+
 // EvalResultsForRun returns every eval_results row for runID.
 func EvalResultsForRun(db *sql.DB, runID int64) ([]EvalResultRow, error) {
-	rows, err := db.Query(`
-SELECT id, eval_run_id, eval_task_id, passed, stage, similarity, response_zstd, error
-FROM eval_results WHERE eval_run_id = ?`, runID)
+	rows, err := db.Query(`SELECT `+evalResultColumns+` FROM eval_results WHERE eval_run_id = ?`, runID)
 	if err != nil {
 		return nil, fmt.Errorf("querying eval results for run %d: %w", runID, err)
 	}
 	defer rows.Close()
+	return scanEvalResultRows(rows)
+}
 
+func scanEvalResultRows(rows *sql.Rows) ([]EvalResultRow, error) {
 	var out []EvalResultRow
 	for rows.Next() {
 		var r EvalResultRow
-		if err := rows.Scan(&r.ID, &r.EvalRunID, &r.EvalTaskID, &r.Passed, &r.Stage, &r.Similarity, &r.ResponseZstd, &r.Error); err != nil {
+		if err := rows.Scan(
+			&r.ID, &r.EvalRunID, &r.EvalTaskID, &r.Passed, &r.Stage, &r.Similarity, &r.ResponseZstd, &r.Error,
+			&r.Mode, &r.Turns, &r.TestsRan, &r.TestsPassed, &r.Regressions, &r.TranscriptZstd, &r.CheatFlags,
+		); err != nil {
 			return nil, fmt.Errorf("scanning eval result row: %w", err)
 		}
 		out = append(out, r)

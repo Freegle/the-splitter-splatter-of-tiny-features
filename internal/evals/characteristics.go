@@ -59,6 +59,12 @@ type Characteristics struct {
 	BriefSource  string             `json:"brief_source,omitempty"`
 	CommitSHA    string             `json:"commit_sha,omitempty"`
 	ReverseBrief *ReverseBriefState `json:"reverse_brief,omitempty"`
+	// AgenticTestCmd is the shell command internal/agentic runs (network
+	// denied) to grade this task's held-out tests, derived at seed-history
+	// time from the held-out test files' language. Empty when this task has
+	// no holdout payload, or its holdout tests are not in a language
+	// seed-history knows how to run (see DECISIONS.md: Go only for now).
+	AgenticTestCmd string `json:"agentic_test_cmd,omitempty"`
 	// Evidence records, per dimension name, the mechanical reasoning behind
 	// that dimension's label (language/layer/nature/difficulty/framework/
 	// spec_clarity all get an entry when derived).

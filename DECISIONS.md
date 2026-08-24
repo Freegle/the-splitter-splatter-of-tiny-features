@@ -794,3 +794,199 @@ interpretation choices, since DESIGN.md leaves several mechanics unpinned:
   is the natural `brief_source` value for an operator-authored brief
   (DESIGN.md's brief-derivation rules cover session/call/history but not
   this manual path explicitly).
+
+## 2026-08-24 agentic eval mode implementation (internal/agentic)
+
+Implemented `internal/agentic` (sandbox lifecycle, tool loop, fail-to-pass
+grading, cheat detectors) and `cmd/splitter/cmd_eval_agentic.go`
+(`eval-agentic` subcommand), per DESIGN.md "Agentic eval mode". Deviations
+and interpretation choices:
+
+- **`tests_ran`/`tests_passed` are the harness's own final grading pass**,
+  not a count of the model's own run_tests calls: DESIGN.md pairs them as
+  one triple ("record tests_ran, tests_passed (held-out), regressions...")
+  and calls tests_ran itself "ran the tests at all" as a reported
+  capability. Read literally as one grading operation's output: for a
+  Go held-out task, tests_ran/tests_passed count how many of the held-out
+  test names the FINAL `go test -json` pass actually observed
+  running/passing (a build failure that prevents a test from running at
+  all is "0 ran", not "0 passed"); for a coarse (non-Go, or harvested live
+  task) grade with no per-test data, they become 1/0 from the final
+  command's exit code. Separately, since "ran the tests at all" also reads
+  naturally as a MODEL-behaviour signal (did it bother to check its own
+  work), `ToolExecutor.TestsRanByModel()` tracks the model's own run_tests
+  invocations during the loop too; this is surfaced as `ModelRanTests` in
+  the eval-agentic scorecard (`TrackTally`/`taskOutcome`) but not added to
+  the `eval_results` schema, keeping the DB column's meaning matched to
+  DESIGN.md's literal grading-triple reading.
+- **git_poke REFUSES the call, not just flags it**: DESIGN.md's detector
+  list says escape is "flag and refuse the call" and describes git_poke as
+  only "any read_file/grep/list_dir touching .git paths" (flag implied,
+  refusal not stated). Refusing git_poke too (ToolExecutor returns
+  isError=true and never actually reads/lists/greps the .git path) is a
+  stricter, safer reading that costs nothing: DESIGN's own contamination
+  worry ("might be smart enough to find the upstream repo and establish a
+  fix") is better served by never handing over .git content at all, on top
+  of recording the flag for audit.
+- **Held-out test commands are Go-only in this pass**: `evals.
+  buildHoldoutPayload` only derives a `TestCmd` (`go test -json
+  ./pkg/...`) when every held-out test file in a commit is `.go`.
+  DESIGN.md's "Prep online" step mentions `composer install if
+  configured`, implying PHP support was in scope, but deriving a safe,
+  generic phpunit/vitest/jest invocation for an arbitrary historical
+  commit (correct config file, correct working directory, correct
+  autoloader state) needs per-repo tooling knowledge seed-history has no
+  safe way to guess; a wrong guess would silently mis-grade every non-Go
+  history task rather than just skipping it. Non-Go holdout payloads are
+  still stored (`holdout_tests_zstd` populated, `TestCmd` empty) for a
+  future pass to add real support for; `selectAgenticTasks` skips them
+  (counted in `RunSummary.NotGradedNoTestCommand`) rather than attempting
+  a coarse exit-code grade against unknown tooling. `PrepDependencies`
+  itself still runs `go mod download`/`npm ci` unconditionally when their
+  lockfiles are present (useful prep for a task's non-test dependencies
+  regardless of held-out test language); `composer install` is not wired
+  in, since no held-out grading path can use its result yet.
+- **`internal/verify`'s worktree git plumbing (`addWorktree`/
+  `removeWorktree`/`pruneWorktrees`) is duplicated, not exported and
+  reused**: those three helpers are unexported, and this package's sandbox
+  shape (one worktree per task, not `verify`'s frontier/local pair, no
+  concurrency semaphore) does not fit `verify`'s own `Verifier`-scoped
+  lifecycle cleanly. The git plumbing itself (three `exec.Command` calls,
+  ~10 lines each) is mechanical and identical; duplicating it was judged
+  lower-risk than editing a component this task does not own to export
+  internals for a single external caller. `internal/verify`'s own tests
+  and behaviour are untouched.
+- **`tokenSimilarity`/`tokenLevenshtein` are duplicated from
+  `internal/verify`, not exported and reused**, same rationale: both are
+  unexported in `internal/verify/similarity.go`, and this package needs
+  the same normalized-Levenshtein primitive for `suspect_copy`'s
+  file-content comparison. A small, generic string-similarity utility, not
+  business logic; kept local rather than touching another component's
+  file for one reuse.
+- **`evals.BuildRunBackend`, `evals.ReplayFunc`, `evals.ScheduleTasks`/
+  `ScheduledTask`, and `evals.ApplyReconstructedEdits` were exported**
+  (renamed from `buildRunBackend`/`replayFunc`/`scheduleTasks`/
+  `scheduledTask`/`applyReconstructedEdits`), each a pure rename with no
+  behaviour change, their own tests untouched apart from the one call site
+  `applyReconstructedEdits` had in `seed_history_test.go`. This is the
+  "reuse rather than duplicate" the task brief asked for: agentic's tool
+  loop drives the same backend resolution `eval run` uses (so an
+  OpenAI-compatible or `-backend anthropic` model works unchanged),
+  `eval-agentic` climbs the same per-track ladder ordering as `eval run`,
+  and `suspect_copy` reconstructs the withheld reference fix's final file
+  content with the same apply logic `seed-history`'s own round-trip test
+  already relied on.
+- **`SplitTestFiles`, `HoldoutPayload`/`HoldoutFile`, `DecodeHoldoutPayload`
+  added to `internal/evals`** (new file `holdout.go`), and `seed_history.go`
+  extended (not rewritten) to populate `eval_tasks.holdout_tests_zstd` and
+  `characteristics.agentic_test_cmd` for a commit with test-file changes.
+  `SplitTestFiles` reuses the existing `layerForPath` "tests" classification
+  (DESIGN.md's own `*_test.*`/`tests/`/`spec/` layer defaults), so no new
+  test-file heuristic was invented. `HoldoutFile.Hunks` keeps the
+  package-private `diffHunk` element type (`Old`/`New` exported fields,
+  readable cross-package via range/field access without naming the type);
+  exporting `diffHunk` itself was unnecessary.
+- **`agentic_ready`/`holdout_tests_zstd` (eval_tasks) and `mode`/`turns`/
+  `tests_ran`/`tests_passed`/`regressions`/`transcript_zstd`/`cheat_flags`
+  (eval_results) were added directly to `internal/store`'s v1 migration**
+  (the DB is pre-release; DESIGN.md's agentic section explicitly sanctions
+  this: "extend the v1 migration in place"), and `EvalTaskRow`/
+  `EvalResultRow` plus their existing scan/insert functions in
+  `eval_store.go` were extended to carry the new columns, alongside the
+  brief's own `internal/store/agentic_store.go` for the two genuinely new
+  queries (`UpdateEvalTaskAgenticReady`, `AgenticGradableEvalTasks`):
+  the new columns belong to tables every existing caller of `EvalTaskRow`/
+  `EvalResultRow` already reads/writes in full, so the struct/column list
+  could not be extended without touching the file that owns them.
+  `InsertEvalResult`'s `mode` column is always named in its INSERT
+  statement (a per-row `UNIQUE`/join target, not sparse), so SQLite's own
+  `DEFAULT 'single'` never applies once a value (even an unset Go zero
+  string) is supplied in the column list; `InsertEvalResult` substitutes
+  `"single"` for an empty `row.Mode` itself, so every pre-existing
+  single-turn caller (`internal/evals.Run`, never edited) keeps its
+  original behaviour with no code change on its side.
+- **`suspect_copy`'s size weighting uses the task's own
+  `characteristics.size.diff_lines`** (already computed at seed-history
+  time) rather than a fresh character count of the compared patch text:
+  DESIGN.md asks for "weighted by patch size" without pinning a unit, and
+  the eval library already has a maintained, evidence-based diff-lines
+  figure for exactly this purpose (its own non-monotonic size bucketing);
+  reusing it avoids a second, potentially inconsistent size measure.
+- **`-allow-network` skips `unshare -rn` entirely rather than merely
+  "marking" a live network-denied run untrusted**: DESIGN.md names the
+  flag's two purposes ("for debugging, or as the only way to proceed when
+  unshare is unavailable") without saying whether it should still attempt
+  unshare when available. Skipping it unconditionally when the flag is
+  passed keeps the flag's behaviour identical regardless of whether
+  unshare happens to be installed (debugging network-dependent test
+  commands works the same way either environment), at the cost of a
+  literal read of "marks every result untrusted" being satisfied via a
+  `CheatFlagAllowNetwork` entry appended to every task's `cheat_flags`
+  in that run, rather than a separate boolean.
+- **`eval-agentic` is a standalone top-level subcommand** (`register(
+  "eval-agentic", ...)` in its own `cmd_eval_agentic.go`), not a verb
+  nested under the existing `splitter eval <verb>` dispatcher in
+  `cmd_eval.go`: the task brief names it literally ("cmd_eval_agentic.go:
+  'eval-agentic' subcommand"), and it has a materially different flag
+  surface (`-allow-network`, no `-backend anthropic`-style verb sharing
+  with `harvest`/`add`/`seed-history`/etc.) that does not fit
+  `runEval`'s existing switch cleanly.
+- **PHP/JS lockfile prep (`npm ci`) runs at the sandbox root only**, plus
+  one optional subsystem-named subdirectory for a `go.mod` (a monorepo
+  component in its own Go module); DESIGN.md's "Prep online" step does not
+  specify how deep into a monorepo to search, and the eval library's own
+  `subsystem` field (first path segment of the touched files) is the only
+  mechanical signal available without walking the whole tree.
+
+## 2026-08-24 fix: eval requests need a real max_tokens floor
+
+- **Bug (proven live against a real DeepSeek V4 Flash eval run)**: every
+  synthesized eval request (seed-history's `buildSeedRequest`) carried no
+  `max_tokens`, so `internal/backend.ToOpenAI`'s own 4096 fallback applied
+  on dispatch. DeepSeek V4 Flash is a REASONING model: its reasoning
+  tokens bill as output, so reasoning alone consumed the entire 4096
+  before any answer, and two of five tasks in a real run came back
+  `stop_reason=max_tokens` with zero content blocks, silently scored as
+  model failures the model never got a chance to attempt. Evidence:
+  eval_results run 2, task ids 1 and 5, `response_zstd` decompresses to
+  `content:[]` with `stop_reason:"max_tokens"`.
+- **Fix**: added `[evals].max_answer_tokens` (default 16384) to
+  `internal/config`. `internal/evals.applyMaxAnswerTokensFloor` raises a
+  request's `MaxTokens` to this floor whenever it is lower (covering both
+  an absent value and an old, too-low one from before this floor
+  existed), called from `scoreOneTask` (`eval run`) right before
+  dispatch, so already-seeded tasks are fixed without re-seeding.
+  `buildSeedRequest` (seed-history) also now takes the resolved floor as
+  a parameter instead of hardcoding 4096, so freshly-seeded tasks carry
+  the right value from the start too. `internal/agentic`'s tool loop
+  gained the same floor as `TaskBounds.MaxAnswerTokens`
+  (`BoundsFromConfig` resolves it from the same config key, defaulting
+  when unset so a caller that skips `BoundsFromConfig` — e.g. a test
+  building `TaskBounds{}` directly — still never sends `max_tokens=0`).
+  Harvested (live-capture) requests were not touched: they carry the real
+  request Claude Code itself sent, with its own real `max_tokens`, not a
+  synthesized one.
+- **Tests**: `internal/evals.TestApplyMaxAnswerTokensFloor` (table-driven:
+  absent/low/equal/explicit-larger `max_tokens`) plus
+  `TestRun_FloorsMaxTokensOnDispatch` (httptest end-to-end: one stored
+  task with no `max_tokens` arrives at the fake backend with 16384, one
+  with an explicit 50000 keeps it), and the `internal/agentic` mirrors
+  (`TestRunLoop_RequestsCarryMaxAnswerTokens`,
+  `TestRunLoop_UnsetMaxAnswerTokensFallsBackToDefault`,
+  `TestBoundsFromConfig_MaxAnswerTokens`).
+- **Also in this pass** (small items in files this task already owns):
+  - `[evals].seed_context_bytes` (default 65536, was a hardcoded 20KB)
+    replaces the previous unconditional `seedContextCapBytes` constant: 3
+    of 5 hand-picked seed candidates were blocked by the old cap because
+    a single real touched source file alone exceeded 20KB. Tested by
+    `TestSeedHistory_ContextCapIsConfigurable` (the raised default admits
+    a commit that modifies an existing ~28KB file; a caller-configured
+    lower cap still excludes it).
+  - `[layers]` defaults gained `"iznik-batch/" = "backend-api"`: a
+    harvested PHP task under `iznik-batch/` came back `layer=""`.
+    DESIGN.md's layer taxonomy has no separate "batch" category, and
+    `iznik-batch` is Laravel scheduled-job/business logic (CLAUDE.md:
+    "runs Laravel scheduled jobs against production DB"), the same kind
+    of server-side code `iznik-server-go/` already maps to backend-api,
+    so it was folded into that bucket rather than inventing a new layer
+    value DESIGN.md's scorecard grouping does not expect.

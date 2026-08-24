@@ -240,6 +240,132 @@ func TestSeedHistory_MaxLimitsInsertedCount(t *testing.T) {
 	}
 }
 
+// TestSeedHistory_ContextCapIsConfigurable builds two commits touching the
+// same file: one that ADDS it (a new file's content is never shown as
+// context, per buildSeedRequest, so this commit's synthesized request
+// stays small) and one that later MODIFIES it (whose request context
+// includes the file's full ~28KB parent-state content: too large for the
+// old, hardcoded 20KB cap, but under the new default of 64KB). Confirms
+// both that the raised default admits the modify commit and that a
+// caller-configured lower cap still excludes it specifically.
+func TestSeedHistory_ContextCapIsConfigurable(t *testing.T) {
+	repoPath := t.TempDir()
+	runGit(t, repoPath, "init", "-q", "-b", "main")
+	writeSeedFile(t, repoPath, ".gitattributes", "* text=auto eol=lf\n")
+	commitGit(t, repoPath, "root", "2024-01-01T00:00:00Z")
+
+	var big strings.Builder
+	for i := 0; i < 400; i++ {
+		big.WriteString("// a real source line long enough to add up quickly across many lines\n")
+	}
+	writeSeedFile(t, repoPath, "internal/verylarge.go", big.String())
+	commitGit(t, repoPath, "add a large file", "2024-01-02T00:00:00Z")
+
+	writeSeedFile(t, repoPath, "internal/verylarge.go", strings.Replace(big.String(), "// a real", "// a fixed", 1))
+	commitGit(t, repoPath, "touch the large file, exceeding the old 20KB cap alone", "2024-01-03T00:00:00Z")
+
+	opts := SeedHistoryOptions{RepoPath: repoPath, Since: "2020-01-01", MaxFiles: 3, MaxDiffLines: 500}
+
+	t.Run("default 64KB cap admits both", func(t *testing.T) {
+		db := openSeedTestDB(t)
+		cfg := config.Default()
+		cfg.RepoPath = repoPath
+
+		summary, err := SeedHistory(db, cfg, opts)
+		if err != nil {
+			t.Fatalf("SeedHistory: %v", err)
+		}
+		if summary.Inserted != 2 {
+			t.Errorf("Inserted = %d, want 2 (the 64KB default cap should admit both commits)", summary.Inserted)
+		}
+		if summary.SkippedContextCap != 0 {
+			t.Errorf("SkippedContextCap = %d, want 0", summary.SkippedContextCap)
+		}
+	})
+
+	t.Run("a configured lower cap still skips the large modify commit", func(t *testing.T) {
+		db := openSeedTestDB(t)
+		cfg := config.Default()
+		cfg.RepoPath = repoPath
+		cfg.Evals.SeedContextBytes = 10 * 1024
+
+		summary, err := SeedHistory(db, cfg, opts)
+		if err != nil {
+			t.Fatalf("SeedHistory: %v", err)
+		}
+		if summary.Inserted != 1 {
+			t.Errorf("Inserted = %d, want 1 (only the small 'add' commit fits under a 10KB cap)", summary.Inserted)
+		}
+		if summary.SkippedContextCap != 1 {
+			t.Errorf("SkippedContextCap = %d, want 1 (the large 'modify' commit)", summary.SkippedContextCap)
+		}
+	})
+}
+
+// TestSeedHistory_SynthesizedRequestMaxTokens confirms the synthesized
+// request's max_tokens comes from [evals].max_answer_tokens, and that an
+// unconfigured EvalsConfig still floors it to the package default rather
+// than sending 0 (which internal/backend.ToOpenAI would otherwise quietly
+// default to 4096, the bug this floor exists to prevent).
+func TestSeedHistory_SynthesizedRequestMaxTokens(t *testing.T) {
+	repoPath, _, _, _ := seedTestRepo(t)
+	opts := SeedHistoryOptions{RepoPath: repoPath, Since: "2020-01-01", MaxFiles: 3, MaxDiffLines: 120}
+
+	t.Run("configured value", func(t *testing.T) {
+		db := openSeedTestDB(t)
+		cfg := config.Default()
+		cfg.RepoPath = repoPath
+		cfg.Evals.MaxAnswerTokens = 9000
+
+		if _, err := SeedHistory(db, cfg, opts); err != nil {
+			t.Fatalf("SeedHistory: %v", err)
+		}
+		assertAllSeededRequestsHaveMaxTokens(t, db, 9000)
+	})
+
+	t.Run("unset falls back to the package default", func(t *testing.T) {
+		db := openSeedTestDB(t)
+		cfg := config.Default()
+		cfg.RepoPath = repoPath
+		cfg.Evals.MaxAnswerTokens = 0
+
+		if _, err := SeedHistory(db, cfg, opts); err != nil {
+			t.Fatalf("SeedHistory: %v", err)
+		}
+		assertAllSeededRequestsHaveMaxTokens(t, db, defaultMaxAnswerTokens)
+	})
+}
+
+func assertAllSeededRequestsHaveMaxTokens(t *testing.T, db *sql.DB, want int) {
+	t.Helper()
+	tasks, err := store.EvalTasksByOrigin(db, OriginHistory)
+	if err != nil {
+		t.Fatalf("EvalTasksByOrigin: %v", err)
+	}
+	if len(tasks) == 0 {
+		t.Fatal("expected at least one seeded task")
+	}
+	for _, task := range tasks {
+		reqJSON, err := store.Decompress(task.RequestZstd)
+		if err != nil {
+			t.Fatalf("decompressing request for task %d: %v", task.ID, err)
+		}
+		var req anthropicMessagesRequestMaxTokensOnly
+		if err := json.Unmarshal(reqJSON, &req); err != nil {
+			t.Fatalf("decoding request for task %d: %v", task.ID, err)
+		}
+		if req.MaxTokens != want {
+			t.Errorf("task %d request max_tokens = %d, want %d", task.ID, req.MaxTokens, want)
+		}
+	}
+}
+
+// anthropicMessagesRequestMaxTokensOnly decodes just the max_tokens field
+// of a stored request, enough for assertAllSeededRequestsHaveMaxTokens.
+type anthropicMessagesRequestMaxTokensOnly struct {
+	MaxTokens int `json:"max_tokens"`
+}
+
 // TestSeedHistory_ReferenceReconstructionRoundTrip confirms that the
 // fix-up task's synthesized reference response, reapplied to the
 // feature commit's actual parent-state file content, reproduces the
@@ -288,9 +414,9 @@ func TestSeedHistory_ReferenceReconstructionRoundTrip(t *testing.T) {
 		t.Fatalf("showFile fixup: %v", err)
 	}
 
-	got, err := applyReconstructedEdits(parentContent, msg.Content)
+	got, err := ApplyReconstructedEdits(parentContent, msg.Content)
 	if err != nil {
-		t.Fatalf("applyReconstructedEdits: %v", err)
+		t.Fatalf("ApplyReconstructedEdits: %v", err)
 	}
 	if got != wantContent {
 		t.Errorf("round trip mismatch:\ngot:  %q\nwant: %q", got, wantContent)
