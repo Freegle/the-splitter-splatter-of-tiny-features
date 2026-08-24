@@ -1029,3 +1029,16 @@ and interpretation choices:
   still volunteered a diagnosis sentence, milder than before. Reverse-brief
   quality is bounded by the judge model; [judge].model is the lever (Sonnet
   instead of Haiku) when brief quality matters more than pennies.
+
+## 2026-08-24 reference answers are Claude Code changes
+
+- Edward: "the human didn't do it. these are claude code changes." The
+  history-seeded reference answers are Claude Code's own shipped work (human
+  reviewed). Three consequences recorded: (1) the Sonnet 5 control run is a
+  SAME-FAMILY reproduction test, so its shortfall isolates methodology (brief
+  information content plus grading strictness) with capability controlled out;
+  (2) same-family style similarity biases the control's structural scores
+  upward, so the control validates the harness but its absolute score is an
+  upper bound, not a neutral frontier baseline; (3) report copy must say
+  "changes that actually shipped (frontier AI tooling, human reviewed)", not
+  "what our developers did".
