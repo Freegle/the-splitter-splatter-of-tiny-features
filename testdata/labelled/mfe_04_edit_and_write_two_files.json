@@ -1,0 +1,38 @@
+{
+  "label": "multi_file_edit",
+  "notes": "Mixed edit-family tools: one Edit and one Write, against two different files.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Extract the Wilson lower bound math out of router.go into a new file router_wilson.go, and update router.go to call it."
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "text", "text": "Extracting the Wilson bound calculation into its own file." },
+      {
+        "type": "tool_use",
+        "id": "toolu_08A1",
+        "name": "Write",
+        "input": {
+          "file_path": "/home/edward/FreegleDockerWSL/internal/router/router_wilson.go",
+          "content": "package router\n\nimport \"math\"\n\nfunc wilsonLowerBound(agreed, n int, z float64) float64 {\n\t// ...\n\treturn 0\n}\n"
+        }
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_08A2",
+        "name": "Edit",
+        "input": {
+          "file_path": "/home/edward/FreegleDockerWSL/internal/router/router.go",
+          "old_string": "func wilsonLowerBound(agreed, n int, z float64) float64 {\n\t// inline math\n}",
+          "new_string": "// wilsonLowerBound now lives in router_wilson.go"
+        }
+      }
+    ]
+  }
+}

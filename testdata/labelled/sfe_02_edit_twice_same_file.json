@@ -1,0 +1,39 @@
+{
+  "label": "single_file_edit",
+  "notes": "Two Edit blocks, both against the same file: only 1 distinct file, so rule 1 (>=2 distinct files) does not apply and it stays single_file_edit.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "In internal/store/calls_store.go there are two places that build the same SQL column list by hand. Fix both to use the same constant."
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "text", "text": "I'll update both call sites to reference the shared column list." },
+      {
+        "type": "tool_use",
+        "id": "toolu_02A1",
+        "name": "Edit",
+        "input": {
+          "file_path": "/home/edward/FreegleDockerWSL/internal/store/calls_store.go",
+          "old_string": "ts, session_id, model, stream, request_zstd, response_zstd,\n  input_tokens, output_tokens, latency_ms, repo_head, status, error, source",
+          "new_string": "callColumns"
+        }
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_02A2",
+        "name": "Edit",
+        "input": {
+          "file_path": "/home/edward/FreegleDockerWSL/internal/store/calls_store.go",
+          "old_string": "SELECT id, ts, session_id, model, stream, request_zstd, response_zstd,\n       input_tokens, output_tokens, latency_ms, repo_head, status, error, source",
+          "new_string": "SELECT id, callColumns"
+        }
+      }
+    ]
+  }
+}

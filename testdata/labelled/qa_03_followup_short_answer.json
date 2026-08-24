@@ -1,0 +1,23 @@
+{
+  "label": "question_answer",
+  "notes": "Multi-turn conversation; the LAST user message is a short plain-text follow-up question (no tool_result), which is what the classifier looks at.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      { "role": "user", "content": "Why does featurise reprocess a call whose had_error_followup is still NULL?" },
+      {
+        "role": "assistant",
+        "content": [
+          { "type": "text", "text": "Because had_error_followup depends on the NEXT call in the session, which may not have existed the last time featurise ran. Reprocessing lets it fill in once that next call arrives." }
+        ]
+      },
+      { "role": "user", "content": "and if it's the last call in the session forever?" }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "text", "text": "Then it stays NULL indefinitely and gets harmlessly reprocessed (same NULL result) on every run, since there is never a next call to learn from." }
+    ]
+  }
+}

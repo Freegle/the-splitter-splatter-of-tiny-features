@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"What does the ripple governor do?"},"timestamp":"2026-08-21T10:00:00.000Z"}
+{"type":"assistant","message":{"model":"claude-haiku-4-5","id":"msg_6","type":"message","role":"assistant","content":[{"type":"text","text":"It caps reach fan-out per post so a single post cannot flood every rippled-into group at once."}],"stop_reason":"end_turn","usage":{"input_tokens":30,"output_tokens":12}},"timestamp":"2026-08-21T10:00:02.000Z"}

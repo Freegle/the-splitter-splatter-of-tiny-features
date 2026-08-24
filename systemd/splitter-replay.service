@@ -1,0 +1,23 @@
+# Splitter Phase 3/4 batch pipeline, user unit: replay logged calls
+# against the local model, submit and poll the middle-band judge, then
+# recompute router statistics. Triggered hourly by splitter-replay.timer;
+# not enabled directly (no [Install] section needed, systemctl --user
+# enable acts on the timer).
+#
+# `splitter replay` refuses to run when a proxy call was logged more
+# recently than [replay].idle_minutes (default 30) ago: this is how "no
+# traffic for 30 min" is enforced, per BRIEF.md Phase 3 ("runs when no
+# proxy traffic for >30 min"). On an active day that refusal is a normal,
+# expected no-op, not an operational failure, so its ExecStart line is
+# prefixed "-": a non-zero exit there does not fail this unit or stop the
+# judge/router steps below from still running on the same tick (there may
+# be queued judge items or router stats to update independent of whether a
+# new replay batch ran this hour). The judge and router steps are not
+# prefixed: a real failure there should surface.
+
+[Service]
+Type=oneshot
+ExecStart=-%h/.local/bin/splitter replay
+ExecStart=%h/.local/bin/splitter judge submit
+ExecStart=%h/.local/bin/splitter judge poll
+ExecStart=%h/.local/bin/splitter router update

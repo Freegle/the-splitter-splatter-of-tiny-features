@@ -1,0 +1,33 @@
+{
+  "label": "other",
+  "notes": "Tricky case: the last user message IS a tool_result (as in tool_result_summary), but the response reacts with another tool_use (Bash) rather than a text summary, so it is not text-only and rule 4 does not match: falls to other.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      { "role": "user", "content": "Check whether golangci-lint is installed, and run it if so." },
+      {
+        "role": "assistant",
+        "content": [
+          { "type": "tool_use", "id": "toolu_18A1", "name": "Bash", "input": { "command": "which golangci-lint" } }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          { "type": "tool_result", "tool_use_id": "toolu_18A1", "content": "/home/edward/.local/bin/golangci-lint\n" }
+        ]
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      {
+        "type": "thinking",
+        "thinking": "It's installed, so I should run it now rather than just reporting the path.",
+        "signature": "sig-def456"
+      },
+      { "type": "tool_use", "id": "toolu_18A2", "name": "Bash", "input": { "command": "golangci-lint run --fast ./..." } }
+    ]
+  }
+}

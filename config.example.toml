@@ -1,0 +1,115 @@
+# Example splitter configuration. Copy to ~/.config/splitter/config.toml (or
+# point $SPLITTER_CONFIG / --config at a copy) and edit as needed. Any field
+# left out keeps its built-in default (internal/config.Default).
+#
+# Secrets never go in this file: api_key_env names an environment variable,
+# and the actual value is loaded from env_file (KEY=VALUE lines) or the
+# process environment, never written here or into the database.
+
+listen = "127.0.0.1:9925"
+upstream = "https://api.anthropic.com"
+db_path = "~/.local/share/splitter/splitter.db"   # created 0600, parent dirs 0700
+repo_path = "/home/edward/FreegleDockerWSL"        # target repo: HEAD capture + verify worktrees
+env_file = "~/.config/splitter/env"
+
+[replay]
+backend = "ollama"            # default replay backend, -backend flag overrides
+idle_minutes = 30             # replay refuses to run if a call was logged more recently
+max_concurrent_worktrees = 2
+batch_size = 100              # max calls per replay run
+
+[backends.ollama]
+base_url = "http://localhost:11434/v1"
+model = "qwen2.5-coder:7b"
+
+[backends.together]
+base_url = "https://api.together.xyz/v1"
+api_key_env = "TOGETHER_API_KEY"
+model = "Qwen/Qwen2.5-Coder-32B-Instruct"
+
+[backends.gemini]
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_env = "GEMINI_API_KEY"
+model = "gemini-2.5-flash"
+
+[backends.openai]
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-4o-mini"
+
+# First hosted eval target (Edward, 2026-08-24): cheapest tier-1 model, and a
+# reasoning model, so give it real max_tokens or the answer comes back empty.
+# Also speaks the Anthropic wire format at https://api.deepseek.com/anthropic.
+[backends.deepseek]
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+model = "deepseek-v4-flash"
+
+[judge]
+model = "claude-haiku-4-5"
+api_key_env = "ANTHROPIC_API_KEY"
+max_context_chars = 8000      # request context truncation for judge prompts
+
+[thresholds]                  # cascade similarity thresholds
+default_high = 0.9
+default_low = 0.5
+# per language+turn_type override, key "<lang>/<turn_type>":
+# [thresholds.overrides]
+# "go/single_file_edit" = { high = 0.92, low = 0.55 }
+
+[tests]                       # optional per-subsystem test command for the verify cascade
+# "iznik-server-go" = "true"  # placeholder; real commands are user-configured
+
+[router]
+min_n = 30
+min_wilson_lb = 0.9
+dual_dispatch_pct = 5
+
+[evals]
+ladder_track = "language"          # or "layer", or "none" for one global ladder
+stop_wilson_upper = 0.2            # abandon a rung (and higher) once its Wilson upper bound drops below this
+stop_min_n = 8                     # ... with at least this many scored tasks
+futility_consecutive_fails = 6     # or abandon immediately after this many consecutive zero-pass failures
+max_turns = 20                     # agentic eval mode: max tool-loop turns per task
+max_task_tokens = 200000           # agentic eval mode: max input+output tokens per task
+wall_clock_minutes = 10            # agentic eval mode: max wall clock per task
+max_answer_tokens = 16384          # floors every eval request's max_tokens (reasoning models bill reasoning as output)
+seed_context_bytes = 65536         # cap on a seed-history synthesized request's total size
+
+[model_cutoffs]
+# family or exact model id -> training data cutoff "YYYY-MM", the eval
+# library's contamination guard. An exact model id match wins over a
+# family match.
+# "claude-sonnet" = "2026-02"
+# "deepseek-v4-flash" = "2026-01"
+
+[families]
+# override internal/router.Family for specific exact model ids, e.g.:
+# "claude-opus-4-6-20260101" = "claude-opus-custom"
+
+[layers]
+# path prefix or glob -> eval task layer name, used by the eval library to
+# profile model capability by area of the codebase. These are the built-in
+# defaults for this codebase family (internal/config.Default duplicates
+# them so the mapping still applies when this file is absent).
+"iznik-nuxt3/" = "frontend-ui"
+"components/" = "frontend-ui"
+"pages/" = "frontend-ui"
+"*.vue" = "frontend-ui"
+"*.css" = "frontend-ui"
+"iznik-server-go/" = "backend-api"
+"iznik-batch/" = "backend-api"
+"*api*/" = "backend-api"
+"*handler*.go" = "backend-api"
+"migrations/" = "database"
+"*.sql" = "database"
+"docker*" = "infra"
+".circleci/" = "infra"
+"*.yml" = "infra"
+"*_test.*" = "tests"
+"tests/" = "tests"
+"spec/" = "tests"
+"docs/" = "docs"
+"*.md" = "docs"
+"Makefile" = "build"
+"scripts/" = "build"

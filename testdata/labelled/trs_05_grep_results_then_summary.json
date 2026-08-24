@@ -1,0 +1,32 @@
+{
+  "label": "tool_result_summary",
+  "notes": "The tool_result is a Grep call's matches; the response summarises where the pattern occurs, text only.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      { "role": "user", "content": "Where is ExitPlanMode referenced in the internal/feature package?" },
+      {
+        "role": "assistant",
+        "content": [
+          { "type": "tool_use", "id": "toolu_15A1", "name": "Grep", "input": { "pattern": "ExitPlanMode", "path": "internal/feature" } }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_15A1",
+            "content": "internal/feature/turn_type.go:82:\tif b.Type == anthropic.BlockToolUse && b.Name == \"ExitPlanMode\" {\n"
+          }
+        ]
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "text", "text": "It's referenced once, in hasExitPlanMode inside internal/feature/turn_type.go, where the plan turn_type rule checks for it." }
+    ]
+  }
+}

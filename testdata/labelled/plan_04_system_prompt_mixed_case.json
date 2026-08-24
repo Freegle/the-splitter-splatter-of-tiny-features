@@ -1,0 +1,22 @@
+{
+  "label": "plan",
+  "notes": "Tests case-insensitive matching of the system prompt marker: \"PLAN MODE IS ACTIVE\" in capitals.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks. PLAN MODE IS ACTIVE. The user wants a plan, not code changes.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Sketch out how you'd migrate the featuriser from rule-based turn_type detection to a small classifier model."
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "I'd keep the rule-based classifier as a labelling baseline, log its output alongside a small model's predictions for a few weeks, then only cut over once the model beats the rules on the labelled sample."
+      }
+    ]
+  }
+}

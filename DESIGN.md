@@ -244,6 +244,20 @@ skipping them (log once), and a truncated stream by returning what it has plus e
 
 ## internal/proxy (Phase 1)
 
+ADAPTED, NOT WRITTEN FROM SCRATCH (Edward: "don't reinvent proxy from scratch, we can
+modify something gpl and credit"). Base: seifghazi/claude-code-proxy (MIT, Go), pinned
+commit 02c9c766679eee75c861bbde11c6d8b5249d44a7, pristine clone available at
+/tmp/claude-1000/-home-edward-FreegleDockerWSL/e9e40137-99c4-4556-a1e1-fb551f885d59/scratchpad/ccp.
+Reuse its forwarding and SSE streaming approach (handler/handlers.go
+handleStreamingResponse and handleNonStreamingResponse, provider/anthropic.go) and
+adapt storage to our store schema. Attribution requirements: a NOTICE file at the repo
+root carrying the upstream MIT license text and copyright, plus a header comment in
+each derived file: "Adapted from seifghazi/claude-code-proxy (MIT), commit 02c9c766."
+Their web dashboard, conversation views and model router are NOT taken (no web UI in
+the brief; our router is Phase 4). Requirements below still define the acceptance bar
+where they go beyond the upstream code (fail-open, async logging, repo HEAD capture,
+session id heuristic, overhead budget).
+
 - `net/http` server on `listen`. Every path is forwarded verbatim to `upstream` —
   method, path, query, all headers except hop-by-hop (Connection, Keep-Alive,
   Transfer-Encoding, Upgrade, Proxy-*), body untouched. Auth passes through untouched.
@@ -435,6 +449,319 @@ until we have learned otherwise, which we should (keep measuring per exact versi
 - `splitter report weekly`: frontier tokens avoided (sum of local-served output
   tokens), estimated cost saved (pricing table), quality incidents (escalations),
   drift check results (shadow disagreement rate).
+
+## Eval library (internal/evals)
+
+Requirement from Edward: build up a library of specific tasks that have tripped up
+models in this codebase, then use it to evaluate new models against them. Each task is
+pinned by git commit plus a brief. This is the concrete mechanism behind the model
+families rule: a new version inherits family stats, and running the eval library
+against it is how we learn otherwise quickly.
+
+Schema (part of the store migration, pre-release so still schema v1):
+
+```sql
+CREATE TABLE eval_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_ts TEXT NOT NULL,
+  call_id INTEGER REFERENCES calls(id),   -- NULL for manually added tasks
+  repo_head TEXT,                          -- git commit of the target repo
+  brief TEXT NOT NULL,                     -- one line: what the task was
+  turn_type TEXT,
+  subsystem TEXT,
+  frontier_model TEXT,                     -- exact model that set the reference
+  request_zstd BLOB NOT NULL,              -- frozen copy, survives calls pruning
+  reference_response_zstd BLOB,            -- the frontier answer
+  origin TEXT NOT NULL,                    -- disagreement|escalation|error_followup|clean|history|manual
+  language TEXT,                           -- go|php|js|ts|vue|sql|shell|markdown|yaml|mixed
+  layer TEXT,                              -- backend-api|frontend-ui|database|infra|tests|docs|build
+  nature TEXT,                             -- bugfix|feature|refactor|test-writing|config|docs
+  difficulty TEXT,                         -- challenging|simple|NULL unknown
+  characteristics TEXT,                    -- JSON evidence: size {files,diff_lines,context_bytes}, tags, difficulty signals
+  active INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(call_id, origin)
+);
+CREATE TABLE eval_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  backend TEXT NOT NULL,
+  model TEXT NOT NULL,
+  tasks_total INTEGER,
+  tasks_passed INTEGER
+);
+CREATE TABLE eval_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  eval_run_id INTEGER NOT NULL REFERENCES eval_runs(id),
+  eval_task_id INTEGER NOT NULL REFERENCES eval_tasks(id),
+  passed INTEGER,
+  stage TEXT,
+  similarity REAL,
+  response_zstd BLOB,
+  error TEXT,
+  UNIQUE(eval_run_id, eval_task_id)
+);
+```
+
+Task characteristics (Edward: find tasks that were challenging or simple for Claude;
+then, refining, "difficulty is too simple a dimension... maybe some models are really
+good at API code like the Go, and some models are really good at user facing front
+end. So think about the different characteristics of a problem"): every task gets a
+mechanically derived profile across independent dimensions, no human labelling:
+- language: from touched-file extensions ('mixed' when more than one).
+- layer: path-prefix mapping, configurable as [layers] in the TOML with defaults for
+  this codebase family (iznik-nuxt3/, components/, pages/, *.vue, *.css ->
+  frontend-ui; iznik-server-go/, *api*/, *.go handlers -> backend-api; migrations/,
+  *.sql -> database; docker*, .circleci/, *.yml -> infra; *_test.*, tests/, spec/ ->
+  tests; docs/, *.md -> docs; Makefile, scripts/ -> build).
+- nature: commit-subject keywords plus diff shape (fix/bug/revert -> bugfix,
+  add/feat/new -> feature, refactor/rename/move/extract -> refactor, only test files
+  changed -> test-writing, docs -> docs, bump/config/setting -> config).
+- difficulty: challenging or simple from evidence (below), NULL when unknown.
+- size and tags live in the characteristics JSON with the evidence for every label.
+
+Research-validated refinements (checked against the benchmark literature 2026-08-24,
+citations in DECISIONS.md; these go in the characteristics JSON, no extra columns):
+- framework: within a language the framework skews results materially (DesignBench:
+  React consistently beats Vue on the same tasks, and this codebase is Vue/Nuxt).
+  Derived from paths/extensions: .vue or nuxt paths -> vue-nuxt, *.blade.php ->
+  laravel-blade, plain go stdlib vs gorm/fiber tags from imports when cheap.
+- spec_clarity: SWE-bench Verified exists because underspecified issue text confounds
+  results. Mechanical proxy: does the brief name a file, function or route; brief
+  length bucket (terse <60 chars, normal, detailed >240). Recorded, and scorecards
+  group by it.
+- size is NON-MONOTONIC: SWE-bench analyses show 51-200 line patches resolve BETTER
+  than 1-10 line precision edits, and multi-file patches drop sharply. So size
+  (files, hunks, diff_lines) is recorded and bucketed in scorecards but NEVER used
+  to derive the difficulty label; difficulty stays evidence-based only.
+- task_date + contamination guard: LiveCodeBench shows stark pass-rate drops after a
+  model's training cutoff and memorisation-driven inflation before it. This repo
+  family is PUBLIC GitHub, so history-seeded tasks predating a model's cutoff may be
+  answered from memory. Every task records task_date (commit author date for
+  history, capture ts otherwise) in the characteristics JSON. Config gains a
+  [model_cutoffs] table (family or exact model -> YYYY-MM). eval run splits every
+  scorecard into post-cutoff (trusted) and pre-cutoff (memorisation-suspect) segments
+  and marks models with unknown cutoffs. Live-harvested tasks are post-cutoff by
+  construction and form the trustworthy core; seed-history prefers recent commits
+  (-since defaults to 2 years back).
+- localization: seeded tasks hand the model the touched files (localization removed
+  by construction), live tasks let the agent find them. Recorded as
+  localization: given|discovered so the two are never naively compared.
+
+Scorecards (eval run, eval list) report pass rates grouped by EACH dimension
+(the four columns plus framework, spec_clarity, size bucket and cutoff segment from
+the JSON), giving a capability profile per model: simple tasks are the sanity floor,
+and the language x layer x framework breakdown is what reveals "good at Go API, weak
+at Vue frontend".
+The router keeps (turn_type, subsystem, families) as its category key for now;
+subsystem already approximates layer in this codebase. When eval profiles show a
+model splitting along language or layer within one subsystem, promoting those
+dimensions into the router category is the intended evolution (note in the report
+when observed).
+
+Subcommands (cmd_eval.go, `splitter eval <verb>`):
+- `eval harvest [-include-clean N]`: creates eval_tasks from live capture, deduped by
+  (call_id, origin): verifications with agree=0 (the local model tripped up,
+  difficulty=challenging when the frontier also had an error followup, else NULL),
+  router_decisions with decision='escalated' (challenging), features with
+  had_error_followup=1 (the FRONTIER itself struggled: challenging, evidence records
+  the followup). With -include-clean N it also samples up to N clean tasks
+  (origin='clean', difficulty=simple): single_file_edit turns with
+  had_error_followup=0 and, where a verification exists, agree=1. All harvested tasks
+  get the full characteristics profile derived from the touched files and request.
+  repo_head, turn_type, subsystem, frontier model and the frozen request/reference
+  come from the source call.
+
+Brief derivation (Edward: "you're also going to need to work out the brief for a
+task... where you have [Claude] session history you can tell what I told you about a
+task in like the initial brief. For historical commits you might need to reverse
+engineer something"). The brief must be the ASK, never the answer:
+- Session-sourced tasks (harvest, transcript import): walk calls with the same
+  session_id back to the EARLIEST call and take its last plain-text user block, which
+  is the human's initiating instruction; fall back to the first 120 chars of the
+  task call's own last user text when no session chain exists. brief_source
+  ('session' or 'call') is recorded in the characteristics JSON.
+- Discourse-sourced briefs (Edward: "some of the fixes we've done would just be us
+  pointing you at the discourse thread"): many tasks began life as a report on
+  discourse.ilovefreegle.org. When a Discourse topic URL appears in the commit
+  message body, the PR body for the commit (gh pr list --search sha, PRs embed the
+  Discourse link by repo convention), or the initiating session message, fetch the
+  topic's FIRST POST ONLY via the topic .json endpoint with an Api-Key header
+  (VERIFIED 2026-08-24: this forum 403s unauthenticated reads; the key is read from
+  DISCOURSE_API_KEY in the env file, currently held on the prod batch host, not
+  this machine, so discourse briefs are skipped with a counted warning until the
+  key is added; later posts often contain the diagnosis and would leak the fix, so
+  first post only), strip quotes/HTML, and use it as the brief with brief_source
+  'discourse'.
+  The reference URL is kept in characteristics. Discourse beats every other source
+  when present (it is the authentic pre-fix ask in the reporter's own words); the
+  session message is second, reverse-engineering last.
+- History-sourced tasks: the commit subject describes the CHANGE post-hoc and often
+  prescribes the fix, which would turn the eval into instruction-following. So
+  seed-history stores the mechanical commit-subject brief (brief_source
+  'commit_subject') and marks the task for reversal, and `eval reverse-briefs`
+  (submit and -poll modes, reusing the exported batch client from internal/judge,
+  judge model, cheap) rewrites each marked brief as the request a person would have
+  made BEFORE the change existed: state the observed problem or desired behaviour in
+  the requester's voice, never name the functions, variables or approach of the
+  actual fix. The prompt passes the diff, touched-file context and commit message;
+  the response replaces brief and sets brief_source 'reverse_engineered'. Tasks
+  remain usable with the mechanical brief while reversal is pending; eval run
+  reports how many tasks ran with each brief_source so guided-brief results are
+  never silently mixed with reverse-engineered ones.
+- `eval add -commit <sha> -brief "..." -request <file.json> [-reference <file.json>]`:
+  manual entry.
+Ladder evaluation (Edward: "conduct our evaluation by working upwards from easy
+tasks towards harder tasks until we hit the limit of wasting tokens on tasks that
+are way beyond the model"):
+- Every task gets a rung, computed mechanically: rung 1 = difficulty simple,
+  single_file_edit, context under 8KB; rung 2 = simple, larger or multi-file;
+  rung 3 = difficulty unknown, single-file; rung 4 = unknown, multi-file or large;
+  rung 5 = challenging, small; rung 6 = challenging, multi-file or large. Size feeds
+  the rung only through these coarse buckets (size alone is non-monotonic, see
+  above; the difficulty label stays evidence-based).
+- eval run climbs rungs in order PER TRACK, where a track is the task's language
+  ('mixed' is its own track), because capability differs by dimension: a model can
+  be past its ceiling on the vue track while still climbing the go track. Config
+  [evals]: ladder_track = "language" (or "layer" or "none" for one global ladder),
+  stop_wilson_upper = 0.2, stop_min_n = 8, futility_consecutive_fails = 6.
+- Stopping: within a track, after each task update the rung's pass count; abandon
+  the rung and all higher rungs of that track when the Wilson UPPER bound of the
+  rung's pass rate drops below stop_wilson_upper with n >= stop_min_n, or
+  immediately after futility_consecutive_fails consecutive failures with zero
+  passes. Skipped tasks are recorded in eval_results with error='ladder_skipped'
+  (passed NULL) so reruns and other models still see them.
+- Token accounting: usage from every backend response accumulates into eval_runs
+  (tokens_in, tokens_out); the run summary prints tokens spent, tasks skipped by
+  the ladder, and the estimated tokens saved (skipped count times the run's mean
+  task cost). A -max-tokens flag hard-caps total spend for the run (stop
+  everything, mark the rest ladder_skipped).
+- eval_runs gains ladder TEXT (JSON: per-track stop rung and evidence) plus
+  tokens_in/tokens_out INTEGER columns. The DB is pre-release, so extend the v1
+  migration in place and keep the migrate tests green.
+
+- `eval run -backend <name> [-model <override>]`: replays every active task against
+  the named backend/model and scores each with the SAME verification cascade
+  (worktrees at the task's repo_head, lint, similarity thresholds; judge stage is
+  skipped, middle band counts as not passed, stage records 'band'). Writes eval_runs
+  and eval_results, prints a scorecard per turn_type x subsystem plus a comparison
+  against the most recent prior run of any other model (per-task regressions listed
+  by id, commit and brief).
+- `eval seed-history [-repo path] [-since date] [-max N] [-max-files 3]
+  [-max-diff-lines 120] [-grep pattern]`: seeds the library from the target repo's
+  git history (origin='history', deduped by commit sha stored in repo_head plus
+  brief). Each selected commit becomes a task: repo_head = the commit's PARENT sha
+  (the starting state), brief = the commit subject plus first body lines, request =
+  a synthesized Anthropic Messages request (minimal coding-agent system prompt with
+  Edit and Write tool definitions, user message = the brief plus the parent-state
+  content of the touched files, total context capped at 20KB, commits exceeding the
+  cap are skipped and counted), reference response = a synthesized assistant message
+  whose Edit/Write tool_use blocks reconstruct the commit's actual diff. Selection:
+  skips merges, binary and non-code files, diffs larger than the limits; turn_type
+  and subsystem derived from the touched files. The commit sha is recorded so
+  `eval list` shows "git commit number + brief" per Edward's framing. Historic
+  commits are graded with the same cascade as everything else.
+  Characteristics from git archaeology: language/layer/nature per the profile rules;
+  difficulty=challenging when a later commit within 14 days touches the same files
+  with a subject matching (?i)(fix|bug|revert|typo|oops|correct|broke), or when the
+  commit itself is such a fix (it encodes a task a previous change got wrong);
+  difficulty=simple when the commit was never revisited that way. The characteristics
+  JSON records the follow-up shas or matched pattern as evidence.
+Leakage containment (Edward, two rounds). Round one: a model "might be smart enough
+to find the upstream repo and establish a fix". Round two, superseding the
+sanitisation idea: "it's a bit doomed to try to sanitise the repo to keep the
+details out, so scrap that. Instead, if possible detect if the model has cheated by
+looking at the upstream or the main repo or later git commits." So: the sandbox
+contains the AUTHENTIC repo (real names, real content, no scrubbing, no synthetic
+identities), and validity comes from network denial plus CHEAT DETECTION:
+- Never hand over the answer key: the fix commit sha and the reference response are
+  stored in the DB only and never included in any payload or sandbox. (Not
+  sanitisation, just not shipping the answer.)
+- No provider-side retrieval: eval calls never set web search / browsing flags; our
+  requests carry only our own tool definitions. Backends with always-on server-side
+  retrieval cannot produce trusted scores; note per backend in BACKENDS.md.
+- Network denial for anything that executes locally: model-triggered commands run
+  under unshare -rn (verified working on this WSL2). -allow-network exists for
+  debugging and marks every result untrusted.
+- Cheat detection (agentic mode; detectors, not verdicts, all recorded as
+  cheat_flags JSON on eval_results and any flag demotes the result to the untrusted
+  segment alongside pre-cutoff):
+  1. The full tool transcript is stored (transcript_zstd) so every flag is
+     auditable by a human.
+  2. escape: any tool path argument that resolves outside the sandbox root (after
+     symlink resolution), e.g. reaching for the main checkout or another worktree.
+  3. git_poke: any read_file/grep/list_dir touching .git paths.
+  4. tool_smuggling: model-written file content that introduces subprocess/network
+     reach into the test run: added code matching git invocation, curl/wget/http
+     client calls, or DNS lookups in files the task did not previously have them in
+     (diff-based, per written file).
+  5. suspect_copy: for history tasks, the final model patch is compared to the
+     withheld upstream fix with the normal similarity machinery; near-verbatim
+     match (similarity above 0.98 INCLUDING comments and identifier choices) on a
+     post-cutoff task raises the flag, weighted by patch size (trivial patches
+     converge legitimately; the flag threshold rises as patches shrink).
+  6. During run_tests the harness parks .git (renames it away for the duration), so
+     test-spawned git commands fail closed; "not a git repository" in test output
+     raises attempted_git.
+- The [model_cutoffs] contamination guard covers memorised fixes; the detectors
+  cover active lookup. Both demote to the untrusted segment, never delete.
+
+## Agentic eval mode (internal/agentic)
+
+Edward: "Part of what we want to evaluate is whether the models successfully run and
+fix the tests." Single-turn diff similarity is the weak signal; the strong signal is
+the loop: run the tests, read the failure, iterate to green. Sandboxing means
+contained execution, not no execution.
+
+Grading is fail-to-pass, SWE-bench style, using the repo's own tests:
+- seed-history splits each commit's diff into TEST files and NON-test files (the
+  existing test-file classification). When a commit includes test changes, the task
+  stores them separately (holdout_tests_zstd) and is agentic-gradable: the sandbox
+  gets the PARENT tree plus the commit's TESTS applied, the model gets the brief and
+  must make those tests pass without ever seeing the fix. Grade = fail-to-pass on
+  the held-out tests AND no new failures in the task package's pre-existing tests
+  (both recorded separately). Commits with no test changes stay single-turn-only.
+- Harvested live tasks are agentic-gradable when their subsystem has a configured
+  test command; grade = that command in the sandbox.
+
+Sandbox lifecycle per task (authentic repo, detection over sanitisation, see
+Leakage containment):
+1. Worktree: git worktree add --detach of repo_path at repo_head under
+   /tmp/splitter-agentic-<pid>-<rand>/. Real content, real names, real history in
+   the shared object store; the answer key (fix sha, reference response) is simply
+   never shipped, and detectors watch for the model going looking (.git pokes,
+   escapes, smuggled git/network calls in written files).
+2. Prep online: install/warm dependencies from lockfiles before the model is
+   involved (go mod download with GOMODCACHE bind, npm ci if package-lock exists,
+   composer install if configured). Prep failures mark the task agentic_ready=0.
+3. Loop network-denied: every model-triggered command runs under unshare -rn.
+   Refuse -mode agentic when unshare is unavailable unless -allow-network is given,
+   which marks every result untrusted. During each run_tests the harness parks
+   .git (rename away, restore after) so test code cannot read history; tool calls
+   never resolve outside the sandbox root (escape attempts are flagged, not
+   followed).
+4. Teardown always (defer + the same startup sweep pattern as verify worktrees,
+   plus git worktree prune on the source repo).
+
+The loop (eval run -mode agentic): our harness drives the OpenAI-compatible (or
+anthropic-kind) backend in a tool loop: tools = read_file, list_dir, edit (literal
+old->new), write, run_tests (the task's test command), grep. NO general bash and no
+network tools: the tool surface is the sandbox boundary for what the model can do,
+unshare is the boundary for what its commands can reach. Tool results truncated to
+8KB each. Bounds per task from [evals]: max_turns (default 20), max task tokens
+(default 200k), wall clock (default 10 min); exceeding any = fail with reason.
+eval_results gains mode TEXT ('single'|'agentic'), turns INTEGER,
+tests_ran INTEGER, tests_passed INTEGER (held-out), regressions INTEGER
+(pre-existing test failures introduced), transcript_zstd BLOB (full tool
+transcript) and cheat_flags TEXT (JSON array, see Leakage containment; any flag
+demotes the result to the untrusted segment). The ladder, token accounting, cutoff and
+leaky segmentation all apply unchanged. Scorecards report the two modes separately;
+"ran the tests at all" (tests_ran) is itself a reported capability, per Edward.
+
+- `eval list`: id, origin, repo_head short sha, brief, pass rate per model so far.
+- Evaluating a new ANTHROPIC model works through a minimal native client (raw HTTP
+  POST /v1/messages, non-streaming, x-api-key from judge.api_key_env) selected with
+  `-backend anthropic -model <id>`; this client is for eval runs only, live routing
+  never uses it.
 
 ## cmd import-history
 

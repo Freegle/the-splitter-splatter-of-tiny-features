@@ -1,0 +1,22 @@
+{
+  "label": "plan",
+  "notes": "No ExitPlanMode call yet in this turn, but the system prompt states plan mode is active, so this is still a planning turn.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks. Plan mode is active. Do not edit any files; only investigate and describe the change you would make.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What would need to change to support a third replay backend beyond ollama and together?"
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "That would need three changes: a new entry under [backends] in config.example.toml, a BackendConfig in internal/config, and nothing else in internal/backend since the OpenAI-compatible client is already generic over base_url and model."
+      }
+    ]
+  }
+}

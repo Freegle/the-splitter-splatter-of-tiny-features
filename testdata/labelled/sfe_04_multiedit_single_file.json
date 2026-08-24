@@ -1,0 +1,33 @@
+{
+  "label": "single_file_edit",
+  "notes": "Tricky case: MultiEdit makes several changes, but its edits array is all within one file_path, so it is still exactly 1 distinct file.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Rename the local variable \"tmp\" to \"draft\" everywhere it's used in internal/router/router.go, there are four occurrences."
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "text", "text": "Renaming all four occurrences of tmp to draft." },
+      {
+        "type": "tool_use",
+        "id": "toolu_04A1",
+        "name": "MultiEdit",
+        "input": {
+          "file_path": "/home/edward/FreegleDockerWSL/internal/router/router.go",
+          "edits": [
+            { "old_string": "tmp := candidates[0]", "new_string": "draft := candidates[0]" },
+            { "old_string": "return tmp", "new_string": "return draft" },
+            { "old_string": "if tmp.Routable {", "new_string": "if draft.Routable {" },
+            { "old_string": "log.Printf(\"chosen %v\", tmp)", "new_string": "log.Printf(\"chosen %v\", draft)" }
+          ]
+        }
+      }
+    ]
+  }
+}

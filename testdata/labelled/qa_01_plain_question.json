@@ -1,0 +1,19 @@
+{
+  "label": "question_answer",
+  "notes": "Plain question, no tool results in play, text-only answer.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      { "role": "user", "content": "What's the difference between the calls table and the features table in this schema?" }
+    ]
+  },
+  "response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "calls stores one row per proxied or imported API call: the raw compressed request/response, tokens, latency and status. features stores one row per call (keyed by call_id) holding the featuriser's derived turn_type, files_touched, subsystem and error-followup signal."
+      }
+    ]
+  }
+}

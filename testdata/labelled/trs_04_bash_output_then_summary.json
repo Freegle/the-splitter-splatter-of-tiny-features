@@ -1,0 +1,32 @@
+{
+  "label": "tool_result_summary",
+  "notes": "The tool_result is the output of a Bash test run; the response summarises the results in text only.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      { "role": "user", "content": "Run the feature package tests and tell me if they pass." },
+      {
+        "role": "assistant",
+        "content": [
+          { "type": "tool_use", "id": "toolu_14A1", "name": "Bash", "input": { "command": "go test ./internal/feature/..." } }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_14A1",
+            "content": "ok  \tgithub.com/freegle/splitter/internal/feature\t0.793s\n"
+          }
+        ]
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "text", "text": "All tests in internal/feature pass, completing in under a second." }
+    ]
+  }
+}

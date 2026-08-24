@@ -1,0 +1,29 @@
+{
+  "label": "single_file_edit",
+  "notes": "One Edit tool_use block against one file.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Fix the typo in the group name validation error message in iznik-server-go/group/group.go, it says \"Goup name\" instead of \"Group name\"."
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "text", "text": "I'll fix that typo now." },
+      {
+        "type": "tool_use",
+        "id": "toolu_01A1B2C3",
+        "name": "Edit",
+        "input": {
+          "file_path": "/home/edward/FreegleDockerWSL/iznik-server-go/group/group.go",
+          "old_string": "return errors.New(\"Goup name is required\")",
+          "new_string": "return errors.New(\"Group name is required\")"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "label": "plan",
+  "notes": "Response ends with an ExitPlanMode tool_use after laying out a plan.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks. Plan mode is active. Research and prepare a plan, but do not make any edits until the user approves.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "How would you add OAuth login support to the freegle API? Don't write any code yet, just plan it."
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Here is my plan:\n1. Add an oauth package with provider configs.\n2. Add a callback handler that exchanges the code for a token.\n3. Link the OAuth identity to an existing or new user account.\n4. Add tests for each step."
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_09A1",
+        "name": "ExitPlanMode",
+        "input": {
+          "plan": "1. Add oauth package.\n2. Add callback handler.\n3. Link identity to account.\n4. Add tests."
+        }
+      }
+    ]
+  }
+}

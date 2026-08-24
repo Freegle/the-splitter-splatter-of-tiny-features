@@ -1,0 +1,34 @@
+{
+  "label": "tool_result_summary",
+  "notes": "The tool_result's content is an array of content blocks (rather than a bare string), which the request decoder must still recognise as a tool_result.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      { "role": "user", "content": "Check the go.mod for this module and tell me the Go version it declares." },
+      {
+        "role": "assistant",
+        "content": [
+          { "type": "tool_use", "id": "toolu_12A1", "name": "Read", "input": { "file_path": "/home/edward/FreegleDockerWSL/go.mod" } }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_12A1",
+            "content": [
+              { "type": "text", "text": "module github.com/freegle/splitter\n\ngo 1.25.0\n\nrequire (\n\tgithub.com/BurntSushi/toml v1.6.0\n)\n" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "text", "text": "It declares go 1.25.0." }
+    ]
+  }
+}

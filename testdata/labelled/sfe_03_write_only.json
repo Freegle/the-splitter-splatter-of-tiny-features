@@ -1,0 +1,28 @@
+{
+  "label": "single_file_edit",
+  "notes": "A single Write block creating a new file.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Add a small helpers package with a function that formats a duration as \"Xh Ym\". Put it in internal/helpers/duration.go."
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "text", "text": "Creating the new helper file." },
+      {
+        "type": "tool_use",
+        "id": "toolu_03A1",
+        "name": "Write",
+        "input": {
+          "file_path": "/home/edward/FreegleDockerWSL/internal/helpers/duration.go",
+          "content": "package helpers\n\nimport (\n\t\"fmt\"\n\t\"time\"\n)\n\nfunc FormatDuration(d time.Duration) string {\n\th := int(d.Hours())\n\tm := int(d.Minutes()) % 60\n\treturn fmt.Sprintf(\"%dh %dm\", h, m)\n}\n"
+        }
+      }
+    ]
+  }
+}

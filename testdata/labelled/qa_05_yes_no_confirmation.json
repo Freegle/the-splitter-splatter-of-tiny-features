@@ -1,0 +1,22 @@
+{
+  "label": "question_answer",
+  "notes": "A very short plain-text user turn (a confirmation, not a real question) still counts as plain text: no tool_result present, and the response is text-only.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      {
+        "role": "assistant",
+        "content": [
+          { "type": "text", "text": "Do you want me to keep the fallback pricing at $5/$25 per MTok, matching Opus, or pick something else?" }
+        ]
+      },
+      { "role": "user", "content": "yes, keep it matching opus" }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "text", "text": "Understood, fallback pricing stays at $5 input / $25 output per MTok." }
+    ]
+  }
+}
