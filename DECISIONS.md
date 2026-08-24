@@ -1070,3 +1070,15 @@ and interpretation choices:
   Control model and judge default: claude-opus-5. Self-family judge bias
   (Claude judging Claude against Claude-authored references) is recorded as
   an open risk; -model enables a cross-family judge check.
+
+## 2026-08-24 WAL abandoned after third corruption
+
+- Three corruption incidents in one day of concurrent multi-process use
+  (transient IOERR setting WAL mode, then twice "database disk image is
+  malformed", integrity_check showing doubly-referenced pages): all under
+  WAL with modernc.org/sqlite on WSL2, multiple splitter processes reading
+  and writing concurrently. store.Open now sets journal_mode=DELETE (plain
+  POSIX locking, busy_timeout absorbs write serialisation; volumes are
+  tiny). The WAL-retry hack this replaces is removed. Recovery: .dump
+  salvaged all 20 tasks and 52 of 60 result rows (opus control kept 19/20;
+  the lost rows were judge verdicts and the interrupted deepseek re-run).

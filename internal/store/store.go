@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/klauspost/compress/zstd"
 	_ "modernc.org/sqlite"
@@ -44,16 +43,15 @@ func Open(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("opening db %s: %w", path, err)
 	}
 
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		// A fresh connection can transiently hit a disk I/O error here
-		// when another connection in the same process has just been
-		// writing WAL heavily (seen twice from bootstrap's post-eval
-		// router step). One short-delay retry clears it.
-		time.Sleep(250 * time.Millisecond)
-		if _, retryErr := db.Exec("PRAGMA journal_mode=WAL"); retryErr != nil {
-			db.Close()
-			return nil, fmt.Errorf("setting WAL mode on %s: %w", path, err)
-		}
+	// Rollback journal (DELETE), not WAL: three corruption incidents in one
+	// day of concurrent multi-process use traced to WAL under this pure-Go
+	// driver on WSL2 (transient IOERR opening, then twice "database disk
+	// image is malformed" under concurrent writers). DELETE mode uses plain
+	// POSIX file locking, and busy_timeout absorbs the write serialisation
+	// at this workload's tiny volumes.
+	if _, err := db.Exec("PRAGMA journal_mode=DELETE"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("setting journal mode on %s: %w", path, err)
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
 		db.Close()
