@@ -68,23 +68,27 @@ func JudgeFails(ctx context.Context, db *sql.DB, cfg *config.Config, model strin
 		}
 
 		prompt := fmt.Sprintf("The request both changes answered:\n%s\n\nThe change that shipped:\n%s\n\nThe candidate change:\n%s\n\n%s",
-			task.Brief, truncate(string(refJSON), 12000), truncate(string(candJSON), 12000), judgeFailsInstruction)
+			task.Brief, truncate(stripThinking(refJSON), 12000), truncate(stripThinking(candJSON), 12000), judgeFailsInstruction)
 
 		req := anthropic.MessagesRequest{
-			Model:     model,
-			MaxTokens: 512,
+			Model: model,
+			// Room to think AND answer: an Opus judge reasons before its
+			// verdict, and 512 returned empty or mid-JSON truncated text.
+			MaxTokens: 8192,
 			Messages: []anthropic.Message{
 				{Role: "user", Content: []anthropic.ContentBlock{{Type: anthropic.BlockText, Text: prompt}}},
 			},
 		}
 		respJSON, err := client.Complete(ctx, req)
 		if err != nil {
+			fmt.Printf("  judge error on result %d (run %d, task %d): %v\n", r.ID, r.EvalRunID, r.EvalTaskID, err)
 			summary.Errored++
 			continue
 		}
 		text := extractResponseText(respJSON)
 		verdict, err := judge.ParseVerdict(text)
 		if err != nil {
+			fmt.Printf("  judge verdict unparseable on result %d (run %d, task %d): %v; text starts: %.120s\n", r.ID, r.EvalRunID, r.EvalTaskID, err, text)
 			summary.Errored++
 			continue
 		}
@@ -127,6 +131,38 @@ func extractResponseText(msg []byte) string {
 		}
 	}
 	return out
+}
+
+// stripThinking removes thinking blocks from a message JSON before it is
+// shown to the judge: reasoning is not part of either change, and a
+// truncated thinking blob reads as (and once polluted) a verdict.
+func stripThinking(msg []byte) string {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(msg, &m); err != nil {
+		return string(msg)
+	}
+	var blocks []map[string]json.RawMessage
+	if err := json.Unmarshal(m["content"], &blocks); err != nil {
+		return string(msg)
+	}
+	kept := blocks[:0]
+	for _, b := range blocks {
+		var typ string
+		json.Unmarshal(b["type"], &typ)
+		if typ != "thinking" && typ != "redacted_thinking" {
+			kept = append(kept, b)
+		}
+	}
+	content, err := json.Marshal(kept)
+	if err != nil {
+		return string(msg)
+	}
+	m["content"] = content
+	out, err := json.Marshal(m)
+	if err != nil {
+		return string(msg)
+	}
+	return string(out)
 }
 
 func truncate(s string, n int) string {
