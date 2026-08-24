@@ -651,32 +651,96 @@ are way beyond the model"):
   commit itself is such a fix (it encodes a task a previous change got wrong);
   difficulty=simple when the commit was never revisited that way. The characteristics
   JSON records the follow-up shas or matched pattern as evidence.
-Leakage containment (Edward: a model working on a disposable fork of our repo
-"might be smart enough to find the upstream repo and establish a fix. We don't want
-them to be able to do that"). The Freegle repos are public GitHub, so the actual fix
-for any seeded task exists upstream; an eval must measure coding, not retrieval:
-- Single-turn eval requests (the current eval run): the payload must never contain
-  upstream coordinates. Enforced scrub of the synthesized request and brief: no
-  remote URLs, no commit shas (the fix sha lives only in the DB, never in the
-  payload), no "github.com/<org>" strings; a configurable [evals] scrub_terms list
-  (defaults include freegle, iznik, ilovefreegle, modtools) is checked and a task
-  whose payload still matches after mechanical stripping is flagged leaky=1 in
-  characteristics and excluded from scorecard trust (reported separately). A unit
-  test asserts seed-history output passes the scrub check.
-- Provider-side retrieval: never enable web search / browsing / tool-use features on
-  eval backend calls (our requests carry only Edit/Write tool definitions, and the
-  OpenAI translation must not set any provider browsing flags). Backends with
-  always-on server-side retrieval cannot produce trusted scores; note per backend in
-  BACKENDS.md when discovered.
-- Future agentic evals (a model working inside a disposable checkout, not built
-  yet): the checkout must be an EXPORT, not a fork: git archive of the base tree
-  into a fresh git init with one synthetic root commit, no remotes, generic author,
-  so neither history nor config identifies upstream; and the sandbox must be
-  network-denied (docker --network none or unshare -n). Recorded here so the
-  eventual implementation inherits the requirement.
-- The [model_cutoffs] contamination guard covers memorised fixes; this section
-  covers active lookup. Both marks (pre-cutoff, leaky) demote a result to the
-  untrusted segment rather than deleting it.
+Leakage containment (Edward, two rounds). Round one: a model "might be smart enough
+to find the upstream repo and establish a fix". Round two, superseding the
+sanitisation idea: "it's a bit doomed to try to sanitise the repo to keep the
+details out, so scrap that. Instead, if possible detect if the model has cheated by
+looking at the upstream or the main repo or later git commits." So: the sandbox
+contains the AUTHENTIC repo (real names, real content, no scrubbing, no synthetic
+identities), and validity comes from network denial plus CHEAT DETECTION:
+- Never hand over the answer key: the fix commit sha and the reference response are
+  stored in the DB only and never included in any payload or sandbox. (Not
+  sanitisation, just not shipping the answer.)
+- No provider-side retrieval: eval calls never set web search / browsing flags; our
+  requests carry only our own tool definitions. Backends with always-on server-side
+  retrieval cannot produce trusted scores; note per backend in BACKENDS.md.
+- Network denial for anything that executes locally: model-triggered commands run
+  under unshare -rn (verified working on this WSL2). -allow-network exists for
+  debugging and marks every result untrusted.
+- Cheat detection (agentic mode; detectors, not verdicts, all recorded as
+  cheat_flags JSON on eval_results and any flag demotes the result to the untrusted
+  segment alongside pre-cutoff):
+  1. The full tool transcript is stored (transcript_zstd) so every flag is
+     auditable by a human.
+  2. escape: any tool path argument that resolves outside the sandbox root (after
+     symlink resolution), e.g. reaching for the main checkout or another worktree.
+  3. git_poke: any read_file/grep/list_dir touching .git paths.
+  4. tool_smuggling: model-written file content that introduces subprocess/network
+     reach into the test run: added code matching git invocation, curl/wget/http
+     client calls, or DNS lookups in files the task did not previously have them in
+     (diff-based, per written file).
+  5. suspect_copy: for history tasks, the final model patch is compared to the
+     withheld upstream fix with the normal similarity machinery; near-verbatim
+     match (similarity above 0.98 INCLUDING comments and identifier choices) on a
+     post-cutoff task raises the flag, weighted by patch size (trivial patches
+     converge legitimately; the flag threshold rises as patches shrink).
+  6. During run_tests the harness parks .git (renames it away for the duration), so
+     test-spawned git commands fail closed; "not a git repository" in test output
+     raises attempted_git.
+- The [model_cutoffs] contamination guard covers memorised fixes; the detectors
+  cover active lookup. Both demote to the untrusted segment, never delete.
+
+## Agentic eval mode (internal/agentic)
+
+Edward: "Part of what we want to evaluate is whether the models successfully run and
+fix the tests." Single-turn diff similarity is the weak signal; the strong signal is
+the loop: run the tests, read the failure, iterate to green. Sandboxing means
+contained execution, not no execution.
+
+Grading is fail-to-pass, SWE-bench style, using the repo's own tests:
+- seed-history splits each commit's diff into TEST files and NON-test files (the
+  existing test-file classification). When a commit includes test changes, the task
+  stores them separately (holdout_tests_zstd) and is agentic-gradable: the sandbox
+  gets the PARENT tree plus the commit's TESTS applied, the model gets the brief and
+  must make those tests pass without ever seeing the fix. Grade = fail-to-pass on
+  the held-out tests AND no new failures in the task package's pre-existing tests
+  (both recorded separately). Commits with no test changes stay single-turn-only.
+- Harvested live tasks are agentic-gradable when their subsystem has a configured
+  test command; grade = that command in the sandbox.
+
+Sandbox lifecycle per task (authentic repo, detection over sanitisation, see
+Leakage containment):
+1. Worktree: git worktree add --detach of repo_path at repo_head under
+   /tmp/splitter-agentic-<pid>-<rand>/. Real content, real names, real history in
+   the shared object store; the answer key (fix sha, reference response) is simply
+   never shipped, and detectors watch for the model going looking (.git pokes,
+   escapes, smuggled git/network calls in written files).
+2. Prep online: install/warm dependencies from lockfiles before the model is
+   involved (go mod download with GOMODCACHE bind, npm ci if package-lock exists,
+   composer install if configured). Prep failures mark the task agentic_ready=0.
+3. Loop network-denied: every model-triggered command runs under unshare -rn.
+   Refuse -mode agentic when unshare is unavailable unless -allow-network is given,
+   which marks every result untrusted. During each run_tests the harness parks
+   .git (rename away, restore after) so test code cannot read history; tool calls
+   never resolve outside the sandbox root (escape attempts are flagged, not
+   followed).
+4. Teardown always (defer + the same startup sweep pattern as verify worktrees,
+   plus git worktree prune on the source repo).
+
+The loop (eval run -mode agentic): our harness drives the OpenAI-compatible (or
+anthropic-kind) backend in a tool loop: tools = read_file, list_dir, edit (literal
+old->new), write, run_tests (the task's test command), grep. NO general bash and no
+network tools: the tool surface is the sandbox boundary for what the model can do,
+unshare is the boundary for what its commands can reach. Tool results truncated to
+8KB each. Bounds per task from [evals]: max_turns (default 20), max task tokens
+(default 200k), wall clock (default 10 min); exceeding any = fail with reason.
+eval_results gains mode TEXT ('single'|'agentic'), turns INTEGER,
+tests_ran INTEGER, tests_passed INTEGER (held-out), regressions INTEGER
+(pre-existing test failures introduced), transcript_zstd BLOB (full tool
+transcript) and cheat_flags TEXT (JSON array, see Leakage containment; any flag
+demotes the result to the untrusted segment). The ladder, token accounting, cutoff and
+leaky segmentation all apply unchanged. Scorecards report the two modes separately;
+"ran the tests at all" (tests_ran) is itself a reported capability, per Edward.
 
 - `eval list`: id, origin, repo_head short sha, brief, pass rate per model so far.
 - Evaluating a new ANTHROPIC model works through a minimal native client (raw HTTP

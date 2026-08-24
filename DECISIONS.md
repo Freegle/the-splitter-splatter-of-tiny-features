@@ -259,3 +259,48 @@ Findings (searched 2026-08-24):
   git-archive export (synthetic root commit, no remotes) in a network-denied
   sandbox. Complements the [model_cutoffs] memorisation guard: cutoffs cover what
   the model already knows, scrubbing covers what it could go and look up.
+
+## 2026-08-24 proxy strips Accept-Encoding upstream
+
+- **internal/proxy always strips Accept-Encoding on the way to upstream**, rather
+  than requesting gzip the way the upstream base project does (its
+  provider/anthropic.go sets `Accept-Encoding: gzip` and decompresses the response
+  itself). Our proxy tees every response chunk into a capture buffer as it relays it
+  (DESIGN.md's <=32KB chunked relay), so decoding a compressed stream chunk by chunk
+  while it is still arriving would need a stateful gzip reader threaded through both
+  the client-relay path and the capture path, for a saving that does not matter on a
+  single-user localhost hop between the proxy and api.anthropic.com. Stripping
+  Accept-Encoding keeps both paths operating on the same plain bytes with no
+  decompression step anywhere in the request path, at the cost of slightly more
+  bytes on the wire between the proxy and Anthropic, which is not the bottleneck
+  here. `cleanForwardHeaders` deletes Accept-Encoding only on the outbound
+  (proxy-to-upstream) leg; nothing changes about what Claude Code itself sends or
+  receives on the proxy-to-client leg.
+
+## 2026-08-24 agentic eval mode
+
+- **Run-and-fix-the-tests is a first-class eval**: Edward: "Part of what we want to
+  evaluate is whether the models successfully run and fix the tests." Added
+  DESIGN.md "Agentic eval mode": SWE-bench-style fail-to-pass grading using each
+  commit's own held-out tests (parent tree + commit's tests applied, fix withheld),
+  a bounded tool loop (read/list/grep/edit/write/run_tests, no bash, no network
+  tools), sandbox = scrubbed git-archive export with deps pre-warmed online then
+  the model loop network-denied via unshare -rn (verified working on this WSL2;
+  -allow-network exists but marks results untrusted). tests_ran is reported as its
+  own capability, separate from tests_passed and regressions. Single-turn mode
+  remains for non-gradable tasks and cheap breadth.
+
+## 2026-08-24 detection over sanitisation
+
+- **Scrubbing scrapped, cheat detection instead**: Edward: models need real
+  worktrees, "it's a bit doomed to try to sanitise the repo to keep the details
+  out, so scrap that. Instead, if possible detect if the model has cheated by
+  looking at the upstream or the main repo or later git commits." The scrub_terms
+  mechanism is gone; agentic sandboxes are genuine git worktrees at the base commit
+  (real names, real history in the shared object store). Validity now rests on:
+  never shipping the answer key (fix sha, reference response), network denial
+  (unshare -rn), and detectors over the fully-logged tool transcript: escape,
+  git_poke, tool_smuggling, suspect_copy (near-verbatim match with the withheld
+  fix), attempted_git (.git parked during run_tests, failed pokes surface in
+  output). Flags demote results to the untrusted segment, humans audit the stored
+  transcript.
