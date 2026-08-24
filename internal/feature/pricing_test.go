@@ -63,3 +63,10 @@ func TestPricing_Cost(t *testing.T) {
 		t.Errorf("Cost() = %v, want %v", got, want)
 	}
 }
+
+func TestPricingForDeepSeekFlash(t *testing.T) {
+	p := PricingFor("deepseek-v4-flash")
+	if p.InputPerMTok != 0.14 || p.OutputPerMTok != 0.28 {
+		t.Fatalf("deepseek-v4-flash priced %+v, want 0.14/0.28 (family key mismatch means it fell back to opus pricing)", p)
+	}
+}

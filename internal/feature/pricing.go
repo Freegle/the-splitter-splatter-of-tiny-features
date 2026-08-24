@@ -20,6 +20,10 @@ var pricingTable = map[string]Pricing{
 	"claude-opus":   {InputPerMTok: 5, OutputPerMTok: 25},
 	"claude-sonnet": {InputPerMTok: 3, OutputPerMTok: 15},
 	"claude-haiku":  {InputPerMTok: 1, OutputPerMTok: 5},
+	// Without this entry deepseek falls back to opus-level pricing and the
+	// spend report overstates its cost roughly 35x (see BACKENDS.md). The
+	// "-v-" is what router.Family leaves of the "v4" version marker.
+	"deepseek-v-flash": {InputPerMTok: 0.14, OutputPerMTok: 0.28},
 }
 
 // fallbackPricing prices any model whose family is not in pricingTable.
