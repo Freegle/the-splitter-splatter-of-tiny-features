@@ -1194,3 +1194,15 @@ interpretation choices:
   containers gain no new network reach as a side effect of grading, and a
   misconfigured or missing `COMPOSE_PROJECT_NAME` can never silently
   target the main instance's containers.
+
+## 2026-08-24 night: arena lanes for php and vitest holdouts
+
+- Held-out test commands are no longer Go-only: iznik-batch commits derive
+  `php artisan test --filter='ClassA|ClassB'` and iznik-nuxt3 commits derive
+  `npx vitest run <specs>`, both SUBSYSTEM-RELATIVE because they execute at
+  the subsystem root (arena containers exec at /app; the v1 sandbox executor
+  now runs test commands in <checkout>/<subsystem>). goTestCommand paths were
+  made subsystem-relative for the same reason. eval refresh-requests also
+  rebuilds holdout payloads, so the 16 active tasks seeded before holdout
+  derivation existed become agentic-gradable without reseeding (their
+  reversed briefs are preserved).

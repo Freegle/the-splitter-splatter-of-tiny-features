@@ -71,7 +71,7 @@ func goTestCommand(paths []string) string {
 	var dirs []string
 	for _, p := range paths {
 		dir := filepath.Dir(p)
-		if dir == "." {
+		if dir == "" || dir == "/" {
 			dir = "."
 		}
 		if !seen[dir] {
@@ -94,7 +94,7 @@ func goTestCommand(paths []string) string {
 // ok is false when the commit has no test-file changes (single-turn-only,
 // per DESIGN.md) or seed-history has no safe test command for their
 // language (Go only today, see DECISIONS.md).
-func buildHoldoutPayload(touched []seedTouchedFile, layers map[string]string) (payload HoldoutPayload, ok bool) {
+func buildHoldoutPayload(touched []seedTouchedFile, layers map[string]string, subsystem string) (payload HoldoutPayload, ok bool) {
 	var allPaths []string
 	for _, tf := range touched {
 		allPaths = append(allPaths, tf.Path)
@@ -118,20 +118,78 @@ func buildHoldoutPayload(touched []seedTouchedFile, layers map[string]string) (p
 			Path: tf.Path, IsNew: tf.IsNew, Content: tf.NewContent, Hunks: tf.Hunks,
 		})
 		if strings.EqualFold(filepath.Ext(tf.Path), ".go") {
-			goPaths = append(goPaths, tf.Path)
+			goPaths = append(goPaths, stripSubsystem(tf.Path, subsystem))
 		}
 	}
 
-	// Only Go held-out tests get a derived command today: a generic runner
-	// for php/js/vue held-out tests would need per-repo tooling assumptions
-	// (phpunit config, vitest/jest setup) seed-history cannot safely guess
-	// for an arbitrary historical commit. The payload is still stored (for
-	// future use, and so the commit's test-file changes are visible in
-	// eval list), just not selected by AgenticGradableEvalTasks's caller
-	// today (see internal/agentic and DECISIONS.md).
+	// A command is derived only when every held-out test speaks one
+	// toolchain. Commands use SUBSYSTEM-RELATIVE paths: the arena executes
+	// them inside the subsystem's own container at its root (v1 standalone
+	// grading remains go-only since only Go runs outside the Docker stack).
 	if len(goPaths) == len(testPaths) {
 		payload.TestCmd = goTestCommand(goPaths)
+		return payload, true
+	}
+	if cmd := phpTestCommand(testPaths, subsystem); cmd != "" {
+		payload.TestCmd = cmd
+		return payload, true
+	}
+	if cmd := vitestCommand(testPaths, subsystem); cmd != "" {
+		payload.TestCmd = cmd
+		return payload, true
 	}
 
 	return payload, true
+}
+
+// stripSubsystem removes the leading monorepo path segment (the
+// subsystem, e.g. "iznik-server-go/") from a task file path: derived test
+// commands run at the subsystem root, both in arena containers (docker
+// exec -w /app) and the v1 sandbox (executor dir joined with subsystem).
+func stripSubsystem(p, subsystem string) string {
+	if subsystem != "" {
+		return strings.TrimPrefix(p, subsystem+"/")
+	}
+	return p
+}
+
+// phpTestCommand derives the artisan invocation for held-out Laravel
+// tests: every path must be an iznik-batch *Test.php. artisan runs in the
+// batch container at the app root, so the filter is by class name.
+func phpTestCommand(testPaths []string, subsystem string) string {
+	if subsystem != "iznik-batch" {
+		return ""
+	}
+	var classes []string
+	for _, p := range testPaths {
+		base := filepath.Base(p)
+		if !strings.HasSuffix(base, "Test.php") {
+			return ""
+		}
+		classes = append(classes, strings.TrimSuffix(base, ".php"))
+	}
+	if len(classes) == 0 {
+		return ""
+	}
+	return "php artisan test --filter='" + strings.Join(classes, "|") + "'"
+}
+
+// vitestCommand derives the vitest invocation for held-out nuxt specs:
+// every path must be an iznik-nuxt3 .spec.js/.spec.ts, run from the nuxt
+// container's /app root with the subsystem prefix stripped.
+func vitestCommand(testPaths []string, subsystem string) string {
+	if subsystem != "iznik-nuxt3" {
+		return ""
+	}
+	var specs []string
+	for _, p := range testPaths {
+		if !strings.HasSuffix(p, ".spec.js") && !strings.HasSuffix(p, ".spec.ts") {
+			return ""
+		}
+		specs = append(specs, stripSubsystem(p, subsystem))
+	}
+	if len(specs) == 0 {
+		return ""
+	}
+	return "npx vitest run " + strings.Join(specs, " ")
 }

@@ -310,9 +310,11 @@ func seedOneCommit(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions, sha 
 	specClarity, specEvidence := SpecClarity(brief, paths)
 	framework := Framework(paths, language, seedContentSample(touched))
 
+	subsystem := feature.Subsystem(paths)
+
 	var holdoutCompressed []byte
 	agenticTestCmd := ""
-	if holdout, hasHoldout := buildHoldoutPayload(touched, cfg.Layers); hasHoldout {
+	if holdout, hasHoldout := buildHoldoutPayload(touched, cfg.Layers, subsystem); hasHoldout {
 		holdoutJSON, herr := json.Marshal(holdout)
 		if herr != nil {
 			return false, nature, skipNone, fmt.Errorf("marshaling holdout payload: %w", herr)
@@ -328,7 +330,6 @@ func seedOneCommit(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions, sha 
 	if len(paths) >= 2 {
 		turnType = feature.TurnMultiFileEdit
 	}
-	subsystem := feature.Subsystem(paths)
 
 	characteristics := Characteristics{
 		Framework:      framework,

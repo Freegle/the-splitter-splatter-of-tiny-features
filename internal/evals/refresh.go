@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/freegle/splitter/internal/config"
+	"github.com/freegle/splitter/internal/feature"
 	"github.com/freegle/splitter/internal/store"
 )
 
@@ -70,6 +71,30 @@ func RefreshRequests(db *sql.DB, cfg *config.Config) (*RefreshRequestsSummary, e
 		}
 		if err := store.UpdateEvalTaskRequest(db, t.ID, compressed); err != nil {
 			return nil, fmt.Errorf("updating request for task %d: %w", t.ID, err)
+		}
+
+		// Holdouts are rebuilt with the same touched-file data so tasks
+		// seeded before a lane's command derivation existed become
+		// agentic-gradable without reseeding.
+		var paths []string
+		for _, tf := range touched {
+			if !tf.ContextOnly {
+				paths = append(paths, tf.Path)
+			}
+		}
+		subsystem := feature.Subsystem(paths)
+		if holdout, hasHoldout := buildHoldoutPayload(touched, cfg.Layers, subsystem); hasHoldout {
+			holdoutJSON, herr := json.Marshal(holdout)
+			if herr != nil {
+				return nil, fmt.Errorf("marshaling holdout for task %d: %w", t.ID, herr)
+			}
+			holdoutZstd, herr := store.Compress(holdoutJSON)
+			if herr != nil {
+				return nil, fmt.Errorf("compressing holdout for task %d: %w", t.ID, herr)
+			}
+			if err := store.UpdateEvalTaskHoldout(db, t.ID, holdoutZstd); err != nil {
+				return nil, err
+			}
 		}
 		summary.Refreshed++
 	}

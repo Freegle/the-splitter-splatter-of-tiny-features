@@ -602,3 +602,13 @@ func ApplyEvalJudgeVerdict(db *sql.DB, id int64, passed int, verdictJSON string)
 	}
 	return nil
 }
+
+// UpdateEvalTaskHoldout replaces one task's held-out tests payload
+// (eval refresh-requests backfill: tasks seeded before holdout derivation
+// existed, or before a lane's command derivation was added).
+func UpdateEvalTaskHoldout(db *sql.DB, id int64, holdoutZstd []byte) error {
+	if _, err := db.Exec(`UPDATE eval_tasks SET holdout_tests_zstd = ? WHERE id = ?`, holdoutZstd, id); err != nil {
+		return fmt.Errorf("updating eval task %d holdout: %w", id, err)
+	}
+	return nil
+}

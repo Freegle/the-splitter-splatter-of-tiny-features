@@ -418,12 +418,21 @@ func runOneTask(ctx context.Context, cfg *config.Config, doReplay evals.ReplayFu
 		return taskOutcome{Error: err.Error(), AgenticReady: true}
 	}
 
-	baseline, err := RunGrading(ctx, runner, sandbox.Dir, testCmd)
+	// Derived test commands are subsystem-relative (they run at /app in
+	// arena containers); the v1 sandbox mirrors that by executing them in
+	// the subsystem directory of the checkout.
+	testDir := sandbox.Dir
+	if task.Subsystem.Valid && task.Subsystem.String != "" {
+		testDir = filepath.Join(sandbox.Dir, task.Subsystem.String)
+	}
+
+	baseline, err := RunGrading(ctx, runner, testDir, testCmd)
 	if err != nil {
 		return taskOutcome{Error: "baseline grading: " + err.Error(), AgenticReady: true}
 	}
 
 	exec := NewToolExecutor(sandbox.Dir, runner, testCmd)
+	exec.TestDir = testDir
 	loopResult := RunLoop(ctx, doReplay, exec, task.Brief, bounds)
 
 	transcriptZstd, cerr := store.Compress(loopResult.TranscriptJSON)
@@ -431,7 +440,7 @@ func runOneTask(ctx context.Context, cfg *config.Config, doReplay evals.ReplayFu
 		transcriptZstd = nil
 	}
 
-	final, err := RunGrading(ctx, runner, sandbox.Dir, testCmd)
+	final, err := RunGrading(ctx, runner, testDir, testCmd)
 	if err != nil {
 		return taskOutcome{
 			Error: "final grading: " + err.Error(), AgenticReady: true,

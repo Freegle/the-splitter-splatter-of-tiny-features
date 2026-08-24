@@ -156,6 +156,11 @@ type ToolExecutor struct {
 	Dir     string
 	Tests   TestExecutor
 	TestCmd string
+	// TestDir is where TestCmd executes; empty means Dir. Derived test
+	// commands are subsystem-relative, so the v1 sandbox points this at
+	// the subsystem directory (arena executors ignore it: their exec
+	// working directory is fixed per container).
+	TestDir string
 
 	testsRanByModel int
 	lastTestOutput  string
@@ -460,7 +465,11 @@ func (e *ToolExecutor) runTests(ctx context.Context) (string, bool) {
 	if e.TestCmd == "" {
 		return "no test command is configured for this task", true
 	}
-	output, ok, err := e.Tests.RunTests(ctx, e.Dir, e.TestCmd)
+	testDir := e.TestDir
+	if testDir == "" {
+		testDir = e.Dir
+	}
+	output, ok, err := e.Tests.RunTests(ctx, testDir, e.TestCmd)
 	if err != nil {
 		return "running tests: " + err.Error(), true
 	}

@@ -107,12 +107,46 @@ func TestSeedHistory_HoldoutPayloadForTestFileCommit(t *testing.T) {
 	if len(payload.Files) != 1 || payload.Files[0].Path != "internal/greet/greet_test.go" {
 		t.Errorf("payload.Files = %+v, want one file internal/greet/greet_test.go", payload.Files)
 	}
-	if want := "go test -json ./internal/greet/..."; payload.TestCmd != want {
+	if // Derived commands are subsystem-relative: they execute at the
+	// subsystem root (arena containers exec at /app, the v1 sandbox in
+	// <checkout>/<subsystem>), here subsystem "internal".
+	want := "go test -json ./greet/..."; payload.TestCmd != want {
 		t.Errorf("payload.TestCmd = %q, want %q", payload.TestCmd, want)
 	}
 
 	c := ParseCharacteristics(found.Characteristics.String)
 	if c.AgenticTestCmd != payload.TestCmd {
 		t.Errorf("characteristics.AgenticTestCmd = %q, want %q", c.AgenticTestCmd, payload.TestCmd)
+	}
+}
+
+func TestPhpAndVitestCommandDerivation(t *testing.T) {
+	cases := []struct {
+		name      string
+		paths     []string
+		subsystem string
+		want      string
+	}{
+		{"php single", []string{"iznik-batch/tests/Unit/Services/FooServiceTest.php"}, "iznik-batch",
+			"php artisan test --filter='FooServiceTest'"},
+		{"php multiple classes", []string{"iznik-batch/tests/Unit/ATest.php", "iznik-batch/tests/Feature/BTest.php"}, "iznik-batch",
+			"php artisan test --filter='ATest|BTest'"},
+		{"php wrong subsystem", []string{"iznik-server-go/x_test.go"}, "iznik-server-go", ""},
+		{"vitest specs subsystem-relative", []string{"iznik-nuxt3/tests/unit/components/GroupSelect.spec.js"}, "iznik-nuxt3",
+			"npx vitest run tests/unit/components/GroupSelect.spec.js"},
+		{"vitest rejects non-spec", []string{"iznik-nuxt3/components/GroupSelect.vue"}, "iznik-nuxt3", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var got string
+			if c.subsystem == "iznik-batch" || c.want == "" && c.subsystem != "iznik-nuxt3" {
+				got = phpTestCommand(c.paths, c.subsystem)
+			} else {
+				got = vitestCommand(c.paths, c.subsystem)
+			}
+			if got != c.want {
+				t.Fatalf("%s: got %q want %q", c.name, got, c.want)
+			}
+		})
 	}
 }
