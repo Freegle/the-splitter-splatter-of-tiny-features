@@ -93,3 +93,12 @@ func TestFirstSystemBlockText_EmptyOrMalformed(t *testing.T) {
 		t.Errorf("firstSystemBlockText(malformed) = %q, want empty", got)
 	}
 }
+
+func TestDeriveSessionIDClaudeCodeNestedJSON(t *testing.T) {
+	meta := `{"user_id":"{\"device_id\":\"6d8ad4b\",\"account_uuid\":\"66d14fb4\",\"session_id\":\"34542cef-afc3-458f-a32b-ce75e658627b\"}"}`
+	req := &anthropic.MessagesRequest{Metadata: []byte(meta)}
+	got := deriveSessionID("ua", req)
+	if got != "34542cef-afc3-458f-a32b-ce75e658627b" {
+		t.Fatalf("nested session_id not extracted, got %q", got)
+	}
+}

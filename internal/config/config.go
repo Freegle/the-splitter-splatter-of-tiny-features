@@ -61,6 +61,14 @@ type EvalsConfig struct {
 	// FutilityConsecutiveFails abandons a rung immediately after this many
 	// consecutive failures with zero passes, regardless of StopMinN.
 	FutilityConsecutiveFails int `toml:"futility_consecutive_fails"`
+
+	// MaxTurns bounds one agentic task's tool loop (internal/agentic).
+	MaxTurns int `toml:"max_turns"`
+	// MaxTaskTokens hard-caps one agentic task's own input+output token
+	// spend, independent of the run-level -max-tokens flag.
+	MaxTaskTokens int64 `toml:"max_task_tokens"`
+	// WallClockMinutes bounds one agentic task's wall clock time.
+	WallClockMinutes int `toml:"wall_clock_minutes"`
 }
 
 // ReplayConfig controls the Phase 3 replay worker.
@@ -168,6 +176,9 @@ func Default() *Config {
 			StopWilsonUpper:          0.2,
 			StopMinN:                 8,
 			FutilityConsecutiveFails: 6,
+			MaxTurns:                 20,
+			MaxTaskTokens:            200000,
+			WallClockMinutes:         10,
 		},
 		ModelCutoffs: map[string]string{},
 	}

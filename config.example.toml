@@ -70,6 +70,9 @@ ladder_track = "language"          # or "layer", or "none" for one global ladder
 stop_wilson_upper = 0.2            # abandon a rung (and higher) once its Wilson upper bound drops below this
 stop_min_n = 8                     # ... with at least this many scored tasks
 futility_consecutive_fails = 6     # or abandon immediately after this many consecutive zero-pass failures
+max_turns = 20                     # agentic eval mode: max tool-loop turns per task
+max_task_tokens = 200000           # agentic eval mode: max input+output tokens per task
+wall_clock_minutes = 10            # agentic eval mode: max wall clock per task
 
 [model_cutoffs]
 # family or exact model id -> training data cutoff "YYYY-MM", the eval

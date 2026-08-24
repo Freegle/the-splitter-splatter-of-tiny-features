@@ -32,6 +32,15 @@ func deriveSessionID(userAgent string, req *anthropic.MessagesRequest) string {
 			UserID string `json:"user_id"`
 		}
 		if err := json.Unmarshal(req.Metadata, &meta); err == nil && meta.UserID != "" {
+			// Claude Code's user_id is itself a JSON-encoded object,
+			// {"device_id":...,"account_uuid":...,"session_id":"<uuid>"};
+			// the uuid alone is the stable per-session key.
+			var nested struct {
+				SessionID string `json:"session_id"`
+			}
+			if err := json.Unmarshal([]byte(meta.UserID), &nested); err == nil && nested.SessionID != "" {
+				return nested.SessionID
+			}
 			if m := sessionIDPattern.FindString(meta.UserID); m != "" {
 				return m
 			}

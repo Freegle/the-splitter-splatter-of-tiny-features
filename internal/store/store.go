@@ -207,6 +207,8 @@ CREATE TABLE IF NOT EXISTS eval_tasks (
   difficulty TEXT,
   characteristics TEXT,
   active INTEGER NOT NULL DEFAULT 1,
+  holdout_tests_zstd BLOB,      -- agentic eval mode: the commit's held-out test-file changes, applied to the sandbox before the loop; NULL when this task has none (single-turn only)
+  agentic_ready INTEGER,        -- agentic eval mode: NULL = not attempted, 1 = sandbox dependency prep last succeeded, 0 = last prep failed
   UNIQUE(call_id, origin)
 );
 
@@ -231,6 +233,13 @@ CREATE TABLE IF NOT EXISTS eval_results (
   similarity REAL,
   response_zstd BLOB,
   error TEXT,
+  mode TEXT NOT NULL DEFAULT 'single',  -- 'single' (default cascade-based scoring) or 'agentic' (tool-loop fail-to-pass grading)
+  turns INTEGER,                        -- agentic mode: tool-loop turns taken
+  tests_ran INTEGER,                    -- agentic mode: held-out tests observed running in final grading (or 1/0 for a coarse live-task command)
+  tests_passed INTEGER,                 -- agentic mode: held-out tests that passed in final grading
+  regressions INTEGER,                  -- agentic mode: previously-passing tests in the task package that failed in final grading
+  transcript_zstd BLOB,                 -- agentic mode: the full tool-loop transcript
+  cheat_flags TEXT,                     -- agentic mode: JSON array of {"type","detail"} leakage-containment flags
   UNIQUE(eval_run_id, eval_task_id)
 );
 `
