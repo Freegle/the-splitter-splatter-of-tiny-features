@@ -787,3 +787,32 @@ from proxy overhead/latency stats.
 - Errors: wrap with %w and context; never panic in library code.
 - Keep functions small; no globals except the cmd registry.
 - If you must deviate from this spec, append a dated bullet to DECISIONS.md.
+
+## Agentic eval v2: the real loop (supersedes the standalone sandbox for grading)
+
+Edward: the models must "run the actual tests using the Docker environment, just
+like it did in the real session". The v1 standalone sandbox (bare worktree,
+unshare -rn, go-test-only) remains for quick smoke, but graded agentic sittings
+use the ARENA:
+
+- Arena = a dedicated FreegleDocker worktree created with `./freegle worktree
+  create eval-arena`: its own containers, database, file-sync and status API,
+  fully isolated from the main instance per the worktree rules. Created once,
+  reused across tasks and sittings.
+- Per task: `git checkout --detach <parent sha>` inside the arena, apply the
+  held-out tests, let file-sync propagate (restart dev containers when needed),
+  then hand the model the same tool loop as v1 (read_file, list_dir, grep, edit,
+  write, run_tests).
+- run_tests during the loop = SCOPED real tests inside the arena's dev
+  containers (docker exec: go test ./changed-package, vitest related specs, or
+  the php suite filtered to the touched test class), because full lanes take ~9
+  minutes and a 20-turn loop cannot iterate on that. Final grading = the full
+  relevant lane via the arena's status API, same commands the real sessions
+  used. Held-out tests must go fail to pass, with no new failures in the lane.
+- Containment: no unshare in arena mode. The model never executes anything
+  directly; every action is tool-mediated, run_tests only ever reaches the
+  arena's own containers, and the v1 cheat detectors (escape, git_poke,
+  tool_smuggling, suspect_copy, attempted_git via parked .git) still apply.
+  This is the detection-over-sanitisation stance applied consistently.
+- The arena worktree must NEVER touch the main instance's network, database or
+  containers (worktree isolation rules are absolute).
