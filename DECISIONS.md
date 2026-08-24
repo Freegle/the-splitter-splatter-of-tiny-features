@@ -79,3 +79,57 @@ here, no blocking). Newest at the bottom.
   will have similar characteristics (until we have learned otherwise, which we
   should)". Implemented as family-normalised router statistics plus per-exact-version
   divergence tracking, see DESIGN.md "Model families".
+
+## 2026-08-24 eval library
+
+- **Trip-up eval library**: Edward: "build up a library of specific tasks that have
+  tripped up models in our codebase to then use this to evaluate new models against
+  them. git commit number + brief". Implemented as eval_tasks/eval_runs/eval_results
+  plus `splitter eval harvest|add|run|list`, see DESIGN.md "Eval library". Harvested
+  from local-model disagreements, live escalations, and frontier error-followups, so
+  the library also captures tasks the frontier itself struggled with. Judge stage is
+  excluded from eval scoring (mechanical verification only) so new-model scorecards
+  stay cheap and deterministic; the middle band counts as a fail, which keeps the
+  bar conservative.
+
+## 2026-08-24 repo rename
+
+- **Repo renamed** by Edward to github.com/Freegle/the-splitter-splatter-of-tiny-features
+  (GitHub redirects the old Freegle/splitter URL). The local checkout stays at
+  /home/edward/splitter and the Go module path stays github.com/freegle/splitter:
+  the module is a binary nobody imports, and the shorter path keeps imports readable.
+
+## 2026-08-24 history seeding
+
+- **Eval seeding from git history**: Edward: "we can use historical commits to seed
+  this evaluation". `splitter eval seed-history` turns small historical commits into
+  eval tasks: parent sha as the starting state, commit message as the brief, the real
+  diff (as Edit/Write tool calls) as the reference answer. Filters keep tasks tiny
+  (default max 3 files, 120 diff lines, 20KB context) so a single-turn comparison is
+  fair. The synthesized request uses a minimal generic coding-agent prompt, not a
+  Claude Code transcript, so seeding never depends on transcript formats.
+
+## 2026-08-24 proxy adopted, not reinvented
+
+- **Proxy base**: Edward: "don't reinvent proxy from scratch, we can modify something
+  gpl and credit". Adopted seifghazi/claude-code-proxy (MIT, Go, pass-through capture
+  proxy for Claude Code with SQLite logging, ~500 stars), pinned commit 02c9c766.
+  MIT is even more permissive than GPL, so modify-and-credit is clean: NOTICE file at
+  the repo root with the upstream license and copyright, header comment in each
+  derived file. We take the forwarding and SSE streaming approach and adapt storage to
+  our schema; their web dashboard, conversation browser and model router are not
+  taken. Our fail-open, async logging, repo HEAD capture and overhead requirements
+  remain the acceptance bar on top.
+
+## 2026-08-24 eval task characteristics
+
+- **Characteristics, not one difficulty axis**: Edward: "difficulty is too simple a
+  dimension... maybe some models are really good at API code like the Go, and some
+  models are really good at user facing front end". eval_tasks carry mechanically
+  derived language/layer/nature/difficulty columns plus evidence JSON; scorecards
+  group by each dimension so each model gets a capability profile. Difficulty stays
+  as one dimension (simple = sanity floor, challenging = discrimination), sourced
+  from error-followups, escalations and git archaeology (fix-up commits within 14
+  days). The router keeps (turn_type, subsystem, families) for now; promoting
+  language/layer into the router category is the intended evolution once profiles
+  show splits within a subsystem.

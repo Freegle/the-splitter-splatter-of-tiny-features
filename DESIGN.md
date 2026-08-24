@@ -244,6 +244,20 @@ skipping them (log once), and a truncated stream by returning what it has plus e
 
 ## internal/proxy (Phase 1)
 
+ADAPTED, NOT WRITTEN FROM SCRATCH (Edward: "don't reinvent proxy from scratch, we can
+modify something gpl and credit"). Base: seifghazi/claude-code-proxy (MIT, Go), pinned
+commit 02c9c766679eee75c861bbde11c6d8b5249d44a7, pristine clone available at
+/tmp/claude-1000/-home-edward-FreegleDockerWSL/e9e40137-99c4-4556-a1e1-fb551f885d59/scratchpad/ccp.
+Reuse its forwarding and SSE streaming approach (handler/handlers.go
+handleStreamingResponse and handleNonStreamingResponse, provider/anthropic.go) and
+adapt storage to our store schema. Attribution requirements: a NOTICE file at the repo
+root carrying the upstream MIT license text and copyright, plus a header comment in
+each derived file: "Adapted from seifghazi/claude-code-proxy (MIT), commit 02c9c766."
+Their web dashboard, conversation views and model router are NOT taken (no web UI in
+the brief; our router is Phase 4). Requirements below still define the acceptance bar
+where they go beyond the upstream code (fail-open, async logging, repo HEAD capture,
+session id heuristic, overhead budget).
+
 - `net/http` server on `listen`. Every path is forwarded verbatim to `upstream` —
   method, path, query, all headers except hop-by-hop (Connection, Keep-Alive,
   Transfer-Encoding, Upgrade, Proxy-*), body untouched. Auth passes through untouched.
@@ -435,6 +449,131 @@ until we have learned otherwise, which we should (keep measuring per exact versi
 - `splitter report weekly`: frontier tokens avoided (sum of local-served output
   tokens), estimated cost saved (pricing table), quality incidents (escalations),
   drift check results (shadow disagreement rate).
+
+## Eval library (internal/evals)
+
+Requirement from Edward: build up a library of specific tasks that have tripped up
+models in this codebase, then use it to evaluate new models against them. Each task is
+pinned by git commit plus a brief. This is the concrete mechanism behind the model
+families rule: a new version inherits family stats, and running the eval library
+against it is how we learn otherwise quickly.
+
+Schema (part of the store migration, pre-release so still schema v1):
+
+```sql
+CREATE TABLE eval_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_ts TEXT NOT NULL,
+  call_id INTEGER REFERENCES calls(id),   -- NULL for manually added tasks
+  repo_head TEXT,                          -- git commit of the target repo
+  brief TEXT NOT NULL,                     -- one line: what the task was
+  turn_type TEXT,
+  subsystem TEXT,
+  frontier_model TEXT,                     -- exact model that set the reference
+  request_zstd BLOB NOT NULL,              -- frozen copy, survives calls pruning
+  reference_response_zstd BLOB,            -- the frontier answer
+  origin TEXT NOT NULL,                    -- disagreement|escalation|error_followup|clean|history|manual
+  language TEXT,                           -- go|php|js|ts|vue|sql|shell|markdown|yaml|mixed
+  layer TEXT,                              -- backend-api|frontend-ui|database|infra|tests|docs|build
+  nature TEXT,                             -- bugfix|feature|refactor|test-writing|config|docs
+  difficulty TEXT,                         -- challenging|simple|NULL unknown
+  characteristics TEXT,                    -- JSON evidence: size {files,diff_lines,context_bytes}, tags, difficulty signals
+  active INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(call_id, origin)
+);
+CREATE TABLE eval_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  backend TEXT NOT NULL,
+  model TEXT NOT NULL,
+  tasks_total INTEGER,
+  tasks_passed INTEGER
+);
+CREATE TABLE eval_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  eval_run_id INTEGER NOT NULL REFERENCES eval_runs(id),
+  eval_task_id INTEGER NOT NULL REFERENCES eval_tasks(id),
+  passed INTEGER,
+  stage TEXT,
+  similarity REAL,
+  response_zstd BLOB,
+  error TEXT,
+  UNIQUE(eval_run_id, eval_task_id)
+);
+```
+
+Task characteristics (Edward: find tasks that were challenging or simple for Claude;
+then, refining, "difficulty is too simple a dimension... maybe some models are really
+good at API code like the Go, and some models are really good at user facing front
+end. So think about the different characteristics of a problem"): every task gets a
+mechanically derived profile across independent dimensions, no human labelling:
+- language: from touched-file extensions ('mixed' when more than one).
+- layer: path-prefix mapping, configurable as [layers] in the TOML with defaults for
+  this codebase family (iznik-nuxt3/, components/, pages/, *.vue, *.css ->
+  frontend-ui; iznik-server-go/, *api*/, *.go handlers -> backend-api; migrations/,
+  *.sql -> database; docker*, .circleci/, *.yml -> infra; *_test.*, tests/, spec/ ->
+  tests; docs/, *.md -> docs; Makefile, scripts/ -> build).
+- nature: commit-subject keywords plus diff shape (fix/bug/revert -> bugfix,
+  add/feat/new -> feature, refactor/rename/move/extract -> refactor, only test files
+  changed -> test-writing, docs -> docs, bump/config/setting -> config).
+- difficulty: challenging or simple from evidence (below), NULL when unknown.
+- size and tags live in the characteristics JSON with the evidence for every label.
+Scorecards (eval run, eval list) report pass rates grouped by EACH dimension, giving
+a capability profile per model: simple tasks are the sanity floor, and the
+language x layer breakdown is what reveals "good at Go API, weak at Vue frontend".
+The router keeps (turn_type, subsystem, families) as its category key for now;
+subsystem already approximates layer in this codebase. When eval profiles show a
+model splitting along language or layer within one subsystem, promoting those
+dimensions into the router category is the intended evolution (note in the report
+when observed).
+
+Subcommands (cmd_eval.go, `splitter eval <verb>`):
+- `eval harvest [-include-clean N]`: creates eval_tasks from live capture, deduped by
+  (call_id, origin): verifications with agree=0 (the local model tripped up,
+  difficulty=challenging when the frontier also had an error followup, else NULL),
+  router_decisions with decision='escalated' (challenging), features with
+  had_error_followup=1 (the FRONTIER itself struggled: challenging, evidence records
+  the followup). With -include-clean N it also samples up to N clean tasks
+  (origin='clean', difficulty=simple): single_file_edit turns with
+  had_error_followup=0 and, where a verification exists, agree=1. All harvested tasks
+  get the full characteristics profile derived from the touched files and request.
+  brief is auto-generated: first 120 chars of the last plain-text user message, else
+  the first edited file plus turn_type. repo_head, turn_type, subsystem, frontier
+  model and the frozen request/reference come from the source call.
+- `eval add -commit <sha> -brief "..." -request <file.json> [-reference <file.json>]`:
+  manual entry.
+- `eval run -backend <name> [-model <override>]`: replays every active task against
+  the named backend/model and scores each with the SAME verification cascade
+  (worktrees at the task's repo_head, lint, similarity thresholds; judge stage is
+  skipped, middle band counts as not passed, stage records 'band'). Writes eval_runs
+  and eval_results, prints a scorecard per turn_type x subsystem plus a comparison
+  against the most recent prior run of any other model (per-task regressions listed
+  by id, commit and brief).
+- `eval seed-history [-repo path] [-since date] [-max N] [-max-files 3]
+  [-max-diff-lines 120] [-grep pattern]`: seeds the library from the target repo's
+  git history (origin='history', deduped by commit sha stored in repo_head plus
+  brief). Each selected commit becomes a task: repo_head = the commit's PARENT sha
+  (the starting state), brief = the commit subject plus first body lines, request =
+  a synthesized Anthropic Messages request (minimal coding-agent system prompt with
+  Edit and Write tool definitions, user message = the brief plus the parent-state
+  content of the touched files, total context capped at 20KB, commits exceeding the
+  cap are skipped and counted), reference response = a synthesized assistant message
+  whose Edit/Write tool_use blocks reconstruct the commit's actual diff. Selection:
+  skips merges, binary and non-code files, diffs larger than the limits; turn_type
+  and subsystem derived from the touched files. The commit sha is recorded so
+  `eval list` shows "git commit number + brief" per Edward's framing. Historic
+  commits are graded with the same cascade as everything else.
+  Characteristics from git archaeology: language/layer/nature per the profile rules;
+  difficulty=challenging when a later commit within 14 days touches the same files
+  with a subject matching (?i)(fix|bug|revert|typo|oops|correct|broke), or when the
+  commit itself is such a fix (it encodes a task a previous change got wrong);
+  difficulty=simple when the commit was never revisited that way. The characteristics
+  JSON records the follow-up shas or matched pattern as evidence.
+- `eval list`: id, origin, repo_head short sha, brief, pass rate per model so far.
+- Evaluating a new ANTHROPIC model works through a minimal native client (raw HTTP
+  POST /v1/messages, non-streaming, x-api-key from judge.api_key_env) selected with
+  `-backend anthropic -model <id>`; this client is for eval runs only, live routing
+  never uses it.
 
 ## cmd import-history
 
