@@ -45,9 +45,27 @@ else:
     print('arena config already present')
 PY
 
-echo "== overnight run: deepseek, arena mode, all active tasks"
 set -a; source "$HOME/.config/splitter/env"; set +a
+
+echo "== leg 1: deepseek, arena mode, all active tasks"
 "$HOME/.local/bin/splitter" eval-agentic -arena -backend deepseek -max-tokens 2000000
+
+echo "== leg 2: opus, arena mode (subscription token from the live login)"
+OAT=$(python3 - << 'PY'
+import json, time, os
+d = json.load(open(os.path.expanduser('~/.claude/.credentials.json')))
+o = d.get('claudeAiOauth', {})
+if o.get('expiresAt', 0) / 1000 > time.time() + 600:
+    print(o.get('accessToken', ''))
+PY
+)
+if [ -n "$OAT" ]; then
+  ANTHROPIC_API_KEY="$OAT" "$HOME/.local/bin/splitter" eval-agentic -arena -backend anthropic -model claude-opus-5 -max-tokens 2000000
+else
+  echo "WARN: no valid subscription token in ~/.claude/.credentials.json (expired or missing);"
+  echo "      opus leg not run. Start any Claude Code session to refresh the token, then:"
+  echo "      ANTHROPIC_API_KEY=<token> splitter eval-agentic -arena -backend anthropic -model claude-opus-5"
+fi
 
 echo "== done, $(date). Results:"
 sqlite3 "$HOME/.local/share/splitter/splitter.db" \
