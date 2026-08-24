@@ -3,6 +3,7 @@ package router
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -222,5 +223,48 @@ func TestUpdate_SeparateCategoriesProduceSeparateRows(t *testing.T) {
 	}
 	if len(result.Rows) != 2 {
 		t.Fatalf("len(Rows) = %d, want 2: %+v", len(result.Rows), result.Rows)
+	}
+}
+
+// TestUpdateIncludesTrustedEvalResults proves eval-library results feed
+// router statistics (the evals-first bootstrap path): history-seeded eval
+// passes appear as a category under frontier family "human", cheat-flagged
+// and errored rows are excluded.
+func TestUpdateIncludesTrustedEvalResults(t *testing.T) {
+	db := openTestDB(t)
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO eval_runs (id, ts, backend, model) VALUES (1, '2026-08-24T00:00:00Z', 'deepseek', 'deepseek-v4-flash')`)
+	for i := 1; i <= 3; i++ {
+		mustExec(`INSERT INTO eval_tasks (id, created_ts, brief, origin, turn_type, subsystem, request_zstd) VALUES (?, '2026-08-24T00:00:00Z', 'b', 'history', 'single_file_edit', 'iznik-server-go', X'00')`, i)
+	}
+	mustExec(`INSERT INTO eval_results (eval_run_id, eval_task_id, passed) VALUES (1, 1, 1)`)
+	mustExec(`INSERT INTO eval_results (eval_run_id, eval_task_id, passed, cheat_flags) VALUES (1, 2, 1, '["git_poke"]')`)
+	mustExec(`INSERT INTO eval_results (eval_run_id, eval_task_id, passed, error) VALUES (1, 3, 1, 'backend timeout')`)
+
+	cfg := testUpdateConfig()
+	res, err := Update(db, cfg)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	var found *CategoryStats
+	for i := range res.Rows {
+		if res.Rows[i].Category == "single_file_edit|iznik-server-go" {
+			found = &res.Rows[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("no router row built from eval results: %+v", res.Rows)
+	}
+	if found.N != 1 || found.Agreed != 1 {
+		t.Fatalf("cheat-flagged/errored rows not excluded: n=%d agreed=%d, want 1/1", found.N, found.Agreed)
+	}
+	if !strings.Contains(found.Families, "human>") {
+		t.Fatalf("history eval evidence should carry frontier family 'human', got families %q", found.Families)
 	}
 }

@@ -990,3 +990,22 @@ and interpretation choices:
     of server-side code `iznik-server-go/` already maps to backend-api,
     so it was folded into that bucket rather than inventing a new layer
     value DESIGN.md's scorecard grouping does not expect.
+
+## 2026-08-24 evals-first onboarding
+
+- **Watching-first was too slow**: Edward: "The approach of watching for weeks
+  before you actually do anything is too slow... you'd install this, you'd run
+  the evaluation builder, then you'd evaluate some models, then you'd at least
+  have some candidates." Changes: (1) `splitter bootstrap -backends a,b` chains
+  seed-history, reverse-briefs (bounded wait), eval run per backend, and router
+  update; (2) router update now counts TRUSTED eval results (scored, no error,
+  no cheat flags) as evidence alongside replay verifications, with
+  history-seeded tasks carrying frontier family "human" because their reference
+  is the real committed fix; (3) README reframed evals-first, with the passive
+  capture/replay side positioned as ongoing confirmation. Guided
+  (commit_subject) briefs still count toward candidacy; the brief_source mix
+  remains visible in eval reporting, and reverse-briefs runs inside bootstrap
+  by default precisely to keep that evidence honest.
+- **README split**: Edward: too many subcommands and config items cluttering
+  the README. Full tables moved to COMMANDS.md and CONFIG.md; the README keeps
+  only the eight commands someone trying it would actually run.

@@ -206,3 +206,44 @@ FROM router_decisions WHERE ts >= ? ORDER BY id`, since)
 	}
 	return out, nil
 }
+
+// TrustedEvalResultsForRouter returns every trusted scored eval result as
+// router evidence, in the same shape as decided verifications: passed is
+// the agreement signal, the task's frontier model (or "human" for
+// history-seeded tasks, whose reference answer is the real committed fix)
+// is the frontier side, and the run's model is the cheaper side. Trusted
+// means scored without error and without any cheat flag; ladder-skipped
+// rows (passed IS NULL) are excluded by the same predicate.
+func TrustedEvalResultsForRouter(db *sql.DB) ([]VerificationForRouter, error) {
+	rows, err := db.Query(`
+SELECT COALESCE(NULLIF(t.turn_type, ''), 'other'),
+       COALESCE(t.subsystem, ''),
+       COALESCE(NULLIF(t.frontier_model, ''), 'human'),
+       run.model,
+       er.passed
+FROM eval_results er
+JOIN eval_runs run ON run.id = er.eval_run_id
+JOIN eval_tasks t ON t.id = er.eval_task_id
+WHERE er.passed IS NOT NULL
+  AND (er.error IS NULL OR er.error = '')
+  AND (er.cheat_flags IS NULL OR er.cheat_flags = '' OR er.cheat_flags = '[]')`)
+	if err != nil {
+		return nil, fmt.Errorf("querying trusted eval results for router: %w", err)
+	}
+	defer rows.Close()
+
+	var out []VerificationForRouter
+	for rows.Next() {
+		var v VerificationForRouter
+		var agree int
+		if err := rows.Scan(&v.TurnType, &v.Subsystem, &v.FrontierModel, &v.LocalModel, &agree); err != nil {
+			return nil, fmt.Errorf("scanning trusted eval result for router: %w", err)
+		}
+		v.Agree = agree != 0
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating trusted eval results for router: %w", err)
+	}
+	return out, nil
+}

@@ -72,6 +72,18 @@ func Update(db *sql.DB, cfg *config.Config) (*UpdateResult, error) {
 		return nil, fmt.Errorf("loading decided verifications: %w", err)
 	}
 
+	// Trusted eval-library results count as evidence too, so a fresh
+	// install can bootstrap routing candidates from an evaluation run
+	// instead of waiting weeks for live replay data. History-seeded
+	// tasks carry frontier model "human": their reference answer is the
+	// real committed fix, which is at least as strong a target as
+	// frontier agreement.
+	evalRows, err := store.TrustedEvalResultsForRouter(db)
+	if err != nil {
+		return nil, fmt.Errorf("loading trusted eval results: %w", err)
+	}
+	rows = append(rows, evalRows...)
+
 	type groupKey struct {
 		category string
 		families string
