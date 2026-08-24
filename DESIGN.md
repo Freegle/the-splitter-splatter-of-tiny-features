@@ -651,6 +651,33 @@ are way beyond the model"):
   commit itself is such a fix (it encodes a task a previous change got wrong);
   difficulty=simple when the commit was never revisited that way. The characteristics
   JSON records the follow-up shas or matched pattern as evidence.
+Leakage containment (Edward: a model working on a disposable fork of our repo
+"might be smart enough to find the upstream repo and establish a fix. We don't want
+them to be able to do that"). The Freegle repos are public GitHub, so the actual fix
+for any seeded task exists upstream; an eval must measure coding, not retrieval:
+- Single-turn eval requests (the current eval run): the payload must never contain
+  upstream coordinates. Enforced scrub of the synthesized request and brief: no
+  remote URLs, no commit shas (the fix sha lives only in the DB, never in the
+  payload), no "github.com/<org>" strings; a configurable [evals] scrub_terms list
+  (defaults include freegle, iznik, ilovefreegle, modtools) is checked and a task
+  whose payload still matches after mechanical stripping is flagged leaky=1 in
+  characteristics and excluded from scorecard trust (reported separately). A unit
+  test asserts seed-history output passes the scrub check.
+- Provider-side retrieval: never enable web search / browsing / tool-use features on
+  eval backend calls (our requests carry only Edit/Write tool definitions, and the
+  OpenAI translation must not set any provider browsing flags). Backends with
+  always-on server-side retrieval cannot produce trusted scores; note per backend in
+  BACKENDS.md when discovered.
+- Future agentic evals (a model working inside a disposable checkout, not built
+  yet): the checkout must be an EXPORT, not a fork: git archive of the base tree
+  into a fresh git init with one synthetic root commit, no remotes, generic author,
+  so neither history nor config identifies upstream; and the sandbox must be
+  network-denied (docker --network none or unshare -n). Recorded here so the
+  eventual implementation inherits the requirement.
+- The [model_cutoffs] contamination guard covers memorised fixes; this section
+  covers active lookup. Both marks (pre-cutoff, leaky) demote a result to the
+  untrusted segment rather than deleting it.
+
 - `eval list`: id, origin, repo_head short sha, brief, pass rate per model so far.
 - Evaluating a new ANTHROPIC model works through a minimal native client (raw HTTP
   POST /v1/messages, non-streaming, x-api-key from judge.api_key_env) selected with

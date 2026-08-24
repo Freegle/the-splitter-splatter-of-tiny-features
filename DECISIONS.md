@@ -247,3 +247,15 @@ Findings (searched 2026-08-24):
   rule against naming the fix's identifiers or approach. brief_source
   (session|call|commit_subject|reverse_engineered) is tracked and reported per eval
   run so guided and unguided results never mix silently.
+
+## 2026-08-24 leakage containment
+
+- **Upstream discovery is an eval-validity threat**: Edward: a model given a
+  disposable fork "might be smart enough to find the upstream repo and establish a
+  fix. We don't want them to be able to do that." Three layers, see DESIGN.md
+  "Leakage containment": payload scrub (no remotes/shas/org strings, scrub_terms
+  config, leaky flag excludes from trusted scorecards), no provider-side browsing on
+  eval calls, and a standing requirement that future agentic evals use a scrubbed
+  git-archive export (synthetic root commit, no remotes) in a network-denied
+  sandbox. Complements the [model_cutoffs] memorisation guard: cutoffs cover what
+  the model already knows, scrubbing covers what it could go and look up.
