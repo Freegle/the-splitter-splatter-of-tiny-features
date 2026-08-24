@@ -518,9 +518,40 @@ mechanically derived profile across independent dimensions, no human labelling:
   changed -> test-writing, docs -> docs, bump/config/setting -> config).
 - difficulty: challenging or simple from evidence (below), NULL when unknown.
 - size and tags live in the characteristics JSON with the evidence for every label.
-Scorecards (eval run, eval list) report pass rates grouped by EACH dimension, giving
-a capability profile per model: simple tasks are the sanity floor, and the
-language x layer breakdown is what reveals "good at Go API, weak at Vue frontend".
+
+Research-validated refinements (checked against the benchmark literature 2026-08-24,
+citations in DECISIONS.md; these go in the characteristics JSON, no extra columns):
+- framework: within a language the framework skews results materially (DesignBench:
+  React consistently beats Vue on the same tasks, and this codebase is Vue/Nuxt).
+  Derived from paths/extensions: .vue or nuxt paths -> vue-nuxt, *.blade.php ->
+  laravel-blade, plain go stdlib vs gorm/fiber tags from imports when cheap.
+- spec_clarity: SWE-bench Verified exists because underspecified issue text confounds
+  results. Mechanical proxy: does the brief name a file, function or route; brief
+  length bucket (terse <60 chars, normal, detailed >240). Recorded, and scorecards
+  group by it.
+- size is NON-MONOTONIC: SWE-bench analyses show 51-200 line patches resolve BETTER
+  than 1-10 line precision edits, and multi-file patches drop sharply. So size
+  (files, hunks, diff_lines) is recorded and bucketed in scorecards but NEVER used
+  to derive the difficulty label; difficulty stays evidence-based only.
+- task_date + contamination guard: LiveCodeBench shows stark pass-rate drops after a
+  model's training cutoff and memorisation-driven inflation before it. This repo
+  family is PUBLIC GitHub, so history-seeded tasks predating a model's cutoff may be
+  answered from memory. Every task records task_date (commit author date for
+  history, capture ts otherwise) in the characteristics JSON. Config gains a
+  [model_cutoffs] table (family or exact model -> YYYY-MM). eval run splits every
+  scorecard into post-cutoff (trusted) and pre-cutoff (memorisation-suspect) segments
+  and marks models with unknown cutoffs. Live-harvested tasks are post-cutoff by
+  construction and form the trustworthy core; seed-history prefers recent commits
+  (-since defaults to 2 years back).
+- localization: seeded tasks hand the model the touched files (localization removed
+  by construction), live tasks let the agent find them. Recorded as
+  localization: given|discovered so the two are never naively compared.
+
+Scorecards (eval run, eval list) report pass rates grouped by EACH dimension
+(the four columns plus framework, spec_clarity, size bucket and cutoff segment from
+the JSON), giving a capability profile per model: simple tasks are the sanity floor,
+and the language x layer x framework breakdown is what reveals "good at Go API, weak
+at Vue frontend".
 The router keeps (turn_type, subsystem, families) as its category key for now;
 subsystem already approximates layer in this codebase. When eval profiles show a
 model splitting along language or layer within one subsystem, promoting those
@@ -537,11 +568,62 @@ Subcommands (cmd_eval.go, `splitter eval <verb>`):
   (origin='clean', difficulty=simple): single_file_edit turns with
   had_error_followup=0 and, where a verification exists, agree=1. All harvested tasks
   get the full characteristics profile derived from the touched files and request.
-  brief is auto-generated: first 120 chars of the last plain-text user message, else
-  the first edited file plus turn_type. repo_head, turn_type, subsystem, frontier
-  model and the frozen request/reference come from the source call.
+  repo_head, turn_type, subsystem, frontier model and the frozen request/reference
+  come from the source call.
+
+Brief derivation (Edward: "you're also going to need to work out the brief for a
+task... where you have [Claude] session history you can tell what I told you about a
+task in like the initial brief. For historical commits you might need to reverse
+engineer something"). The brief must be the ASK, never the answer:
+- Session-sourced tasks (harvest, transcript import): walk calls with the same
+  session_id back to the EARLIEST call and take its last plain-text user block, which
+  is the human's initiating instruction; fall back to the first 120 chars of the
+  task call's own last user text when no session chain exists. brief_source
+  ('session' or 'call') is recorded in the characteristics JSON.
+- History-sourced tasks: the commit subject describes the CHANGE post-hoc and often
+  prescribes the fix, which would turn the eval into instruction-following. So
+  seed-history stores the mechanical commit-subject brief (brief_source
+  'commit_subject') and marks the task for reversal, and `eval reverse-briefs`
+  (submit and -poll modes, reusing the exported batch client from internal/judge,
+  judge model, cheap) rewrites each marked brief as the request a person would have
+  made BEFORE the change existed: state the observed problem or desired behaviour in
+  the requester's voice, never name the functions, variables or approach of the
+  actual fix. The prompt passes the diff, touched-file context and commit message;
+  the response replaces brief and sets brief_source 'reverse_engineered'. Tasks
+  remain usable with the mechanical brief while reversal is pending; eval run
+  reports how many tasks ran with each brief_source so guided-brief results are
+  never silently mixed with reverse-engineered ones.
 - `eval add -commit <sha> -brief "..." -request <file.json> [-reference <file.json>]`:
   manual entry.
+Ladder evaluation (Edward: "conduct our evaluation by working upwards from easy
+tasks towards harder tasks until we hit the limit of wasting tokens on tasks that
+are way beyond the model"):
+- Every task gets a rung, computed mechanically: rung 1 = difficulty simple,
+  single_file_edit, context under 8KB; rung 2 = simple, larger or multi-file;
+  rung 3 = difficulty unknown, single-file; rung 4 = unknown, multi-file or large;
+  rung 5 = challenging, small; rung 6 = challenging, multi-file or large. Size feeds
+  the rung only through these coarse buckets (size alone is non-monotonic, see
+  above; the difficulty label stays evidence-based).
+- eval run climbs rungs in order PER TRACK, where a track is the task's language
+  ('mixed' is its own track), because capability differs by dimension: a model can
+  be past its ceiling on the vue track while still climbing the go track. Config
+  [evals]: ladder_track = "language" (or "layer" or "none" for one global ladder),
+  stop_wilson_upper = 0.2, stop_min_n = 8, futility_consecutive_fails = 6.
+- Stopping: within a track, after each task update the rung's pass count; abandon
+  the rung and all higher rungs of that track when the Wilson UPPER bound of the
+  rung's pass rate drops below stop_wilson_upper with n >= stop_min_n, or
+  immediately after futility_consecutive_fails consecutive failures with zero
+  passes. Skipped tasks are recorded in eval_results with error='ladder_skipped'
+  (passed NULL) so reruns and other models still see them.
+- Token accounting: usage from every backend response accumulates into eval_runs
+  (tokens_in, tokens_out); the run summary prints tokens spent, tasks skipped by
+  the ladder, and the estimated tokens saved (skipped count times the run's mean
+  task cost). A -max-tokens flag hard-caps total spend for the run (stop
+  everything, mark the rest ladder_skipped).
+- eval_runs gains ladder TEXT (JSON: per-track stop rung and evidence) plus
+  tokens_in/tokens_out INTEGER columns. The DB is pre-release, so extend the v1
+  migration in place and keep the migrate tests green.
+
 - `eval run -backend <name> [-model <override>]`: replays every active task against
   the named backend/model and scores each with the SAME verification cascade
   (worktrees at the task's repo_head, lint, similarity thresholds; judge stage is

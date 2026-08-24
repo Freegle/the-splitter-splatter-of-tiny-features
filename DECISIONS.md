@@ -133,3 +133,117 @@ here, no blocking). Newest at the bottom.
   days). The router keeps (turn_type, subsystem, families) for now; promoting
   language/layer into the router category is the intended evolution once profiles
   show splits within a subsystem.
+
+## 2026-08-24 module skeleton continued (config, store, anthropic, cmd)
+
+- **`[layers]` glob for "*.go handlers"**: DESIGN.md's layer mapping defaults list
+  "iznik-server-go/, *api*/, *.go handlers -> backend-api" without a precise glob
+  syntax for the last entry. Interpreted as `*handler*.go` (any Go file with
+  "handler" in its name). `internal/config.Default`'s `Layers` map and
+  `config.example.toml`'s `[layers]` table both carry the full DESIGN.md default
+  set; matching this glob against touched files is left to whichever component
+  implements the eval library's layer classification, per DESIGN.md.
+- **`internal/anthropic.AssembleSSE`**: added the SSE event/delta types and the
+  assembler alongside the existing `types.go` (new file `sse.go`), since
+  `types.go` only had the Messages API request/response types from the prior
+  build attempt. Truncation detection covers three cases: no `message_stop`
+  event seen, an accumulated `tool_use` `partial_json` that never became valid
+  JSON (preserved as a JSON string so the assembled message still marshals), and
+  an explicit `error` SSE event (wrapped as `ErrUpstreamSSEError` rather than
+  `ErrTruncatedStream`, since it is a distinct upstream-reported condition, not
+  silent truncation). Usage merges message_start (input tokens) and
+  message_delta (output tokens) field-by-presence (pointer fields) rather than
+  overwriting the whole struct, so a value present in one event is not zeroed by
+  the other's absence.
+- **`eval_tasks`/`eval_runs`/`eval_results`**: added to `internal/store`'s v1
+  migration verbatim from DESIGN.md's eval library schema; the prior build
+  attempt's store only had the Phase 1-4 tables. No query helpers added for
+  these tables in this pass (out of scope: this task covers schema only, per
+  the working instructions to keep new store queries in the owning
+  component's own file).
+- **`cmd/splitter`**: created from scratch (`main.go`, `cmd_version.go`,
+  `cmd_report.go`); none of these existed yet from the prior build attempt.
+  `cmd_report.go` holds only the dispatch map as specified; it defines no
+  report verb itself.
+
+## 2026-08-24 characteristics validated against the literature
+
+Edward: "research online whether your classification of problem aspects/
+characteristics is likely to be correct - don't just assume the ones i gave".
+Findings (searched 2026-08-24):
+- Language as a dimension: VALIDATED. MultiPL-E finds performance correlates with
+  language popularity with real per-language spread; Aider polyglot and McEval exist
+  because single-language benchmarks hide this. https://nuprl.github.io/MultiPL-E/
+  https://aider.chat/2024/12/21/polyglot.html
+- Frontend/backend layer split: VALIDATED, and framework matters WITHIN a language:
+  DesignBench measures React consistently ahead of Vue on identical tasks (this
+  codebase is Vue/Nuxt, so a framework facet was added).
+  https://arxiv.org/abs/2506.06251 https://arxiv.org/html/2505.07473v1
+  Backend end-to-end services are their own axis (BackendForge: best model 55.4%
+  local behaviours vs 28.6% complete services). https://arxiv.org/html/2607.11042
+- Nature (bugfix/feature/refactor): VALIDATED. DesignBench separates generation/
+  edit/repair with differing results; refactoring is benchmarked as a distinct
+  capability (SmellBench, SWE-Refactor). https://arxiv.org/pdf/2606.05574
+- Size: VALIDATED BUT NON-MONOTONIC. SWE-bench analyses: 51-200 line patches resolve
+  at ~40% while 1-10 line precision edits resolve at ~16%, and multi-file patches
+  drop sharply; 12 minimal single-file tasks were unsolved by ALL agents. Size is
+  recorded and bucketed, never used to infer difficulty.
+  https://arxiv.org/pdf/2604.02547 https://www.swebench.com/SWE-bench/
+- ADDED spec_clarity: SWE-bench Verified was built because underspecified issue text
+  confounds evaluation; the brief's specificity is now a recorded facet.
+- ADDED task_date + contamination guard: LiveCodeBench shows stark post-cutoff
+  performance drops and pre-cutoff memorisation inflation; these repos are public
+  GitHub, so pre-cutoff history-seeded tasks are memorisation-suspect. Scorecards
+  split by cutoff segment via a [model_cutoffs] config table.
+  https://livecodebench.github.io/ https://arxiv.org/pdf/2403.07974
+- ADDED localization facet: seeded tasks hand the model the files (given), live
+  tasks made the agent find them (discovered); the two are reported separately.
+
+## 2026-08-24 backend pricing research
+
+- **Price-advantage research** (Edward: which models have a significant price
+  advantage over the Claude subscription; subscriptions acceptable as they bound
+  cost): full findings and sources in BACKENDS.md. Headlines: GLM Coding Plan Lite
+  (~$10-18/mo, Anthropic-compatible drop-in, ~95%-of-Opus press claims needing local
+  validation), Kimi Allegro ($99/mo ~ Anthropic $200 quota), DeepSeek V4 Flash
+  ($0.14/$0.28 per MTok per-token), Gemini CLI free tier (1000 req/day, $0), local
+  qwen3-coder:30b (free, best per-GB mid-2026, now pulled). GLM/Kimi/DeepSeek expose
+  Anthropic-compatible endpoints, so a `kind = "anthropic"` backend type is the
+  planned follow-up; no keys held for them yet (a signup decision for Edward), env
+  names reserved GLM_API_KEY/KIMI_API_KEY/DEEPSEEK_API_KEY. Default replay stays
+  local per the brief.
+
+## 2026-08-24 ladder evaluation
+
+- **Easy-to-hard ladder with futility stopping**: Edward: work upwards from easy
+  tasks towards harder ones until hitting "the limit of wasting tokens on tasks that
+  are way beyond the model". Implemented as per-track rung climbing (track =
+  language by default, because a model can be beyond its ceiling on vue while still
+  climbing go), Wilson-upper-bound futility stops plus a consecutive-failure fast
+  exit, ladder_skipped rows for auditability, token accounting per run and a
+  -max-tokens hard cap. Rungs combine the evidence-based difficulty label with
+  coarse scope buckets only, never raw size ordering (size is non-monotonic).
+
+## 2026-08-24 briefs are the ask, not the answer
+
+- **Brief derivation**: Edward: work out the brief from Claude session history (the
+  initial instruction) where it exists; for historical commits "reverse engineer
+  something". Session-sourced tasks take the session's initiating user message.
+  Commit subjects prescribe the fix (post-hoc), so history-sourced briefs get
+  rewritten by a cheap batched judge-model pass (`eval reverse-briefs`) into the
+  problem statement a requester would have written before the change, with a hard
+  rule against naming the fix's identifiers or approach. brief_source
+  (session|call|commit_subject|reverse_engineered) is tracked and reported per eval
+  run so guided and unguided results never mix silently.
+
+## 2026-08-24 briefs are the ask, not the answer
+
+- **Brief derivation**: Edward: work out the brief from Claude session history (the
+  initial instruction) where it exists; for historical commits "reverse engineer
+  something". Session-sourced tasks take the session's initiating user message.
+  Commit subjects prescribe the fix (post-hoc), so history-sourced briefs get
+  rewritten by a cheap batched judge-model pass (`eval reverse-briefs`) into the
+  problem statement a requester would have written before the change, with a hard
+  rule against naming the fix's identifiers or approach. brief_source
+  (session|call|commit_subject|reverse_engineered) is tracked and reported per eval
+  run so guided and unguided results never mix silently.
