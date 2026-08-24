@@ -86,6 +86,15 @@ type EvalsConfig struct {
 	// marshaled size; a commit whose touched-file context exceeds it is
 	// skipped (skipContextCap).
 	SeedContextBytes int `toml:"seed_context_bytes"`
+
+	// ArenaPath is an existing FreegleDocker worktree checkout (created via
+	// `./freegle worktree create eval-arena`) that `eval-agentic -arena`
+	// drives instead of an ephemeral, unshare-network-denied worktree
+	// sandbox: DESIGN.md "Agentic eval v2". Empty disables arena mode.
+	ArenaPath string `toml:"arena_path"`
+	// ArenaStatusPort is the arena worktree's status API port (its
+	// PORT_STATUS), used to run a full test lane for final grading.
+	ArenaStatusPort int `toml:"arena_status_port"`
 }
 
 // ReplayConfig controls the Phase 3 replay worker.

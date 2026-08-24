@@ -146,7 +146,7 @@ func TestContainsAttemptedGit_FlaggedWhenTestOutputMentionsGitFailure(t *testing
 	// run_tests always returns isError=false (a nonzero test exit is a
 	// normal graded outcome, not a tool call error); the failure must show
 	// up in the result text itself instead.
-	exec := NewToolExecutor(sandbox, CommandRunner{UseUnshare: false, Timeout: 10 * time.Second}, "git status")
+	exec := NewToolExecutor(sandbox.Dir, CommandRunner{UseUnshare: false, Timeout: 10 * time.Second}, "git status")
 	text, _ := exec.runTests(context.Background())
 	if !strings.Contains(strings.ToLower(text), "not a git repository") {
 		t.Fatalf("run_tests output = %q, want it to mention 'not a git repository'", text)

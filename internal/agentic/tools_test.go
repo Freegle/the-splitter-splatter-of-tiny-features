@@ -20,7 +20,7 @@ func newTestExecutor(t *testing.T, testCmd string) (*ToolExecutor, *Sandbox) {
 		t.Fatalf("NewSandbox: %v", err)
 	}
 	t.Cleanup(sandbox.Teardown)
-	return NewToolExecutor(sandbox, CommandRunner{UseUnshare: false, Timeout: 10 * time.Second}, testCmd), sandbox
+	return NewToolExecutor(sandbox.Dir, CommandRunner{UseUnshare: false, Timeout: 10 * time.Second}, testCmd), sandbox
 }
 
 func execArgs(t *testing.T, v map[string]any) json.RawMessage {

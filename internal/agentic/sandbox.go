@@ -285,6 +285,13 @@ func (r CommandRunner) Run(ctx context.Context, dir, command string) (output str
 	return output, false, fmt.Errorf("running command: %w", runErr)
 }
 
+// RunTests implements TestExecutor for v1's local sandbox: it runs command
+// in dir with .git parked for the duration (DESIGN.md "Leakage
+// containment"), optionally network-denied per r.UseUnshare.
+func (r CommandRunner) RunTests(ctx context.Context, dir, command string) (output string, ok bool, err error) {
+	return runTestsWithParking(ctx, r, dir, command)
+}
+
 // runTestsWithParking runs command in dir with .git parked for the
 // duration (restored afterwards regardless of outcome), the shape every
 // run_tests invocation (model-triggered or the harness's own baseline/final

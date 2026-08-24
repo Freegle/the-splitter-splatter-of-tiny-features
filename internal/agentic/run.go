@@ -41,6 +41,12 @@ type RunOptions struct {
 	AllowNetwork bool
 	// MaxTokens hard-caps total tokens_in+tokens_out spend for the run.
 	MaxTokens int64
+	// Arena selects arena mode (DESIGN.md "Agentic eval v2: the real
+	// loop"): the tool loop and grading run against a live FreegleDocker
+	// worktree's real Docker containers via [evals].arena_path /
+	// arena_status_port, instead of v1's ephemeral, unshare-network-denied
+	// worktree sandbox.
+	Arena bool
 }
 
 // TrackTally is one ladder track's agentic outcome tally, the scorecard
@@ -73,6 +79,7 @@ type RunSummary struct {
 	SweptSandboxes            []string
 	NotGradedNoTestCommand    int
 	AllowNetwork              bool
+	Arena                     bool
 }
 
 // Run selects every active, agentic-gradable eval task (a history-origin
@@ -85,14 +92,24 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config, opts RunOptions) (
 		return nil, fmt.Errorf("eval-agentic: -backend is required")
 	}
 
+	var arena *ArenaConfig
 	useUnshare := !opts.AllowNetwork
-	if useUnshare && !UnshareAvailable() {
-		return nil, fmt.Errorf("unshare -rn is unavailable on this machine; pass -allow-network to run anyway (marks every result untrusted)")
-	}
-
-	swept, err := Sweep(cfg.RepoPath, sandboxSweepAge)
-	if err != nil {
-		return nil, fmt.Errorf("sweeping stale sandboxes: %w", err)
+	var swept []string
+	if opts.Arena {
+		var err error
+		arena, err = ResolveArenaConfig(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("eval-agentic -arena: %w", err)
+		}
+	} else {
+		if useUnshare && !UnshareAvailable() {
+			return nil, fmt.Errorf("unshare -rn is unavailable on this machine; pass -allow-network to run anyway (marks every result untrusted)")
+		}
+		var err error
+		swept, err = Sweep(cfg.RepoPath, sandboxSweepAge)
+		if err != nil {
+			return nil, fmt.Errorf("sweeping stale sandboxes: %w", err)
+		}
 	}
 
 	model, doReplay, err := evals.BuildRunBackend(cfg, evals.RunOptions{Backend: opts.Backend, Model: opts.Model})
@@ -122,7 +139,7 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config, opts RunOptions) (
 	summary := &RunSummary{
 		RunID: runID, Backend: opts.Backend, Model: model, TasksTotal: len(scheduled),
 		Ladder: nil, ByTrack: map[string]*TrackTally{}, SweptSandboxes: swept,
-		NotGradedNoTestCommand: notGraded, AllowNetwork: opts.AllowNetwork,
+		NotGradedNoTestCommand: notGraded, AllowNetwork: opts.AllowNetwork, Arena: opts.Arena,
 	}
 
 	var tokensIn, tokensOut int64
@@ -142,7 +159,17 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config, opts RunOptions) (
 			continue
 		}
 
-		outcome := runOneTask(ctx, cfg, doReplay, useUnshare, runner, model, task, testCmds[task.ID], bounds, opts.AllowNetwork)
+		var outcome taskOutcome
+		if opts.Arena {
+			env, envErr := newArenaTaskEnv(arena, task.Subsystem.String)
+			if envErr != nil {
+				outcome = taskOutcome{Error: envErr.Error()}
+			} else {
+				outcome = runOneArenaTask(ctx, cfg, doReplay, model, task, testCmds[task.ID], bounds, env)
+			}
+		} else {
+			outcome = runOneTask(ctx, cfg, doReplay, useUnshare, runner, model, task, testCmds[task.ID], bounds, opts.AllowNetwork)
+		}
 
 		if err := store.UpdateEvalTaskAgenticReady(db, task.ID, outcome.AgenticReady); err != nil {
 			return nil, fmt.Errorf("updating agentic_ready for task %d: %w", task.ID, err)
@@ -291,6 +318,79 @@ type taskOutcome struct {
 	ModelRanTests int
 }
 
+// heldOutContext is what a history-origin task's held-out payload
+// contributes to grading: the test names fail-to-pass grading targets, the
+// paths to exclude from suspect_copy comparison, and (when a reference
+// response is stored) the withheld reference content suspect_copy needs,
+// snapshotted from sandboxDir before the model's loop runs. The zero value
+// (Names/ExcludeTestPaths/RefMsgJSON all empty/nil) is what a non-history
+// task gets: every caller treats it as "nothing to hold out or compare".
+type heldOutContext struct {
+	Names            []string
+	ExcludeTestPaths map[string]bool
+	RefMsgJSON       []byte
+	ParentSnapshot   map[string]string
+	DiffLines        int
+}
+
+// prepareHeldOutContext applies task's held-out test files onto sandboxDir
+// and builds the suspect_copy comparison basis, shared by v1's runOneTask
+// and arena mode's runOneArenaTask. It is a no-op returning the zero
+// heldOutContext for a task with no holdout payload.
+func prepareHeldOutContext(task store.EvalTaskRow, sandboxDir string) (heldOutContext, error) {
+	if len(task.HoldoutTestsZstd) == 0 {
+		return heldOutContext{}, nil
+	}
+
+	holdoutJSON, err := store.Decompress(task.HoldoutTestsZstd)
+	if err != nil {
+		return heldOutContext{}, fmt.Errorf("decompressing holdout payload: %w", err)
+	}
+	payload, err := evals.DecodeHoldoutPayload(holdoutJSON)
+	if err != nil {
+		return heldOutContext{}, fmt.Errorf("decoding holdout payload: %w", err)
+	}
+
+	hc := heldOutContext{ExcludeTestPaths: map[string]bool{}}
+	for _, f := range payload.Files {
+		if err := applyHoldoutFile(sandboxDir, f); err != nil {
+			return heldOutContext{}, fmt.Errorf("applying held-out tests: %w", err)
+		}
+		hc.ExcludeTestPaths[f.Path] = true
+	}
+	hc.Names = HeldOutTestNames(payload)
+
+	if refJSON, derr := store.Decompress(task.ReferenceResponseZstd); derr == nil {
+		hc.RefMsgJSON = refJSON
+		var refMsg struct {
+			Content []anthropic.ContentBlock `json:"content"`
+		}
+		if json.Unmarshal(refJSON, &refMsg) == nil {
+			order, _ := referenceEditsByPath(refMsg.Content, hc.ExcludeTestPaths)
+			hc.ParentSnapshot = snapshotReferenceFiles(sandboxDir, order)
+		}
+	}
+	c := evals.ParseCharacteristics(task.Characteristics.String)
+	hc.DiffLines = c.Size.DiffLines
+	return hc, nil
+}
+
+// detectSuspectCopyForTask runs the suspect_copy detector for a
+// history-origin task (nil for any other task, or one with no withheld
+// reference edits, or one whose task_date is not trusted post-cutoff for
+// model: DESIGN.md "Leakage containment" only trusts this detector against
+// tasks a model could not have memorised).
+func detectSuspectCopyForTask(task store.EvalTaskRow, cfg *config.Config, model, sandboxDir string, hc heldOutContext) *CheatFlag {
+	if hc.RefMsgJSON == nil {
+		return nil
+	}
+	c := evals.ParseCharacteristics(task.Characteristics.String)
+	if evals.CutoffSegment(c.TaskDate, model, cfg.ModelCutoffs, cfg.Families) != evals.SegmentPostCutoff {
+		return nil
+	}
+	return EvaluateSuspectCopy(sandboxDir, hc.RefMsgJSON, hc.ExcludeTestPaths, hc.ParentSnapshot, hc.DiffLines)
+}
+
 // runOneTask runs one task's full sandbox lifecycle: create, prep deps,
 // apply held-out tests (history origin), grade baseline, run the tool
 // loop, grade final, score, detect cheating, tear down. It never returns a
@@ -313,42 +413,9 @@ func runOneTask(ctx context.Context, cfg *config.Config, doReplay evals.ReplayFu
 		return taskOutcome{Error: "sandbox dependency prep failed: " + prepDetail, AgenticReady: false}
 	}
 
-	isHistory := len(task.HoldoutTestsZstd) > 0
-	var heldOutNames []string
-	excludeTestPaths := map[string]bool{}
-	var refMsgJSON []byte
-	var parentSnapshot map[string]string
-	diffLines := 0
-
-	if isHistory {
-		holdoutJSON, err := store.Decompress(task.HoldoutTestsZstd)
-		if err != nil {
-			return taskOutcome{Error: "decompressing holdout payload: " + err.Error(), AgenticReady: true}
-		}
-		payload, err := evals.DecodeHoldoutPayload(holdoutJSON)
-		if err != nil {
-			return taskOutcome{Error: "decoding holdout payload: " + err.Error(), AgenticReady: true}
-		}
-		for _, f := range payload.Files {
-			if err := applyHoldoutFile(sandbox.Dir, f); err != nil {
-				return taskOutcome{Error: "applying held-out tests: " + err.Error(), AgenticReady: true}
-			}
-			excludeTestPaths[f.Path] = true
-		}
-		heldOutNames = HeldOutTestNames(payload)
-
-		if refJSON, derr := store.Decompress(task.ReferenceResponseZstd); derr == nil {
-			refMsgJSON = refJSON
-			var refMsg struct {
-				Content []anthropic.ContentBlock `json:"content"`
-			}
-			if json.Unmarshal(refJSON, &refMsg) == nil {
-				order, _ := referenceEditsByPath(refMsg.Content, excludeTestPaths)
-				parentSnapshot = snapshotReferenceFiles(sandbox.Dir, order)
-			}
-		}
-		c := evals.ParseCharacteristics(task.Characteristics.String)
-		diffLines = c.Size.DiffLines
+	hc, err := prepareHeldOutContext(task, sandbox.Dir)
+	if err != nil {
+		return taskOutcome{Error: err.Error(), AgenticReady: true}
 	}
 
 	baseline, err := RunGrading(ctx, runner, sandbox.Dir, testCmd)
@@ -356,7 +423,7 @@ func runOneTask(ctx context.Context, cfg *config.Config, doReplay evals.ReplayFu
 		return taskOutcome{Error: "baseline grading: " + err.Error(), AgenticReady: true}
 	}
 
-	exec := NewToolExecutor(sandbox, runner, testCmd)
+	exec := NewToolExecutor(sandbox.Dir, runner, testCmd)
 	loopResult := RunLoop(ctx, doReplay, exec, task.Brief, bounds)
 
 	transcriptZstd, cerr := store.Compress(loopResult.TranscriptJSON)
@@ -373,16 +440,11 @@ func runOneTask(ctx context.Context, cfg *config.Config, doReplay evals.ReplayFu
 		}
 	}
 
-	testsRan, testsPassed, regressions := ScoreFailToPass(baseline, final, heldOutNames)
+	testsRan, testsPassed, regressions := ScoreFailToPass(baseline, final, hc.Names)
 
 	cheatFlags := exec.CheatFlags()
-	if isHistory && refMsgJSON != nil {
-		c := evals.ParseCharacteristics(task.Characteristics.String)
-		if evals.CutoffSegment(c.TaskDate, model, cfg.ModelCutoffs, cfg.Families) == evals.SegmentPostCutoff {
-			if flag := EvaluateSuspectCopy(sandbox.Dir, refMsgJSON, excludeTestPaths, parentSnapshot, diffLines); flag != nil {
-				cheatFlags = append(cheatFlags, *flag)
-			}
-		}
+	if flag := detectSuspectCopyForTask(task, cfg, model, sandbox.Dir, hc); flag != nil {
+		cheatFlags = append(cheatFlags, *flag)
 	}
 	if allowNetwork {
 		cheatFlags = append(cheatFlags, CheatFlag{Type: CheatFlagAllowNetwork, Detail: "network denial bypassed via -allow-network"})

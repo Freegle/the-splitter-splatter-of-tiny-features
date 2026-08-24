@@ -1099,3 +1099,98 @@ and interpretation choices:
   knowledge a brief cannot carry, are deactivated with the evidence noted
   in characteristics (tasks 7 and 17); a mechanical heuristic for
   detecting these at seed time is future work.
+
+## 2026-08-24 arena mode (`eval-agentic -arena`)
+
+Implements DESIGN.md's "Agentic eval v2: the real loop". Deviations and
+interpretation choices:
+
+- **`ToolExecutor`/`RunGrading` were refactored from `*Sandbox`/
+  `CommandRunner` to a plain `Dir string` field plus a new `TestExecutor`
+  interface** (`RunTests(ctx, dir, command) (output string, ok bool, err
+  error)`), with `CommandRunner.RunTests` added to satisfy it (wrapping
+  the existing `runTestsWithParking`, unchanged behaviour). Every use of
+  `ToolExecutor.Sandbox`/`.Runner` in the package was exactly `.Dir` and
+  the runner value itself; no other `*Sandbox` field (`Base`, `RepoPath`,
+  `RepoHead`) was ever read through it. This let arena mode's `ArenaRunner`
+  (docker exec, no .git parking) plug into the SAME `ToolExecutor`/
+  `RunGrading` v1 uses, rather than wrapping arena's shared, persistent
+  checkout in a fake `*Sandbox` whose `Teardown` would need to be
+  neutered to avoid `git worktree remove`-ing the arena itself. All
+  existing v1 tests pass unchanged after the rename (`sandbox.Dir` at the
+  two `NewToolExecutor` call sites in `tools_test.go`/`sandbox_test.go`).
+- **Held-out-context and suspect_copy setup extracted into
+  `prepareHeldOutContext`/`detectSuspectCopyForTask`** (run.go), used by
+  both v1's `runOneTask` and arena's `runOneArenaTask`: this was a
+  substantial, easy-to-drift-apart block (holdout decompress/decode,
+  applying held-out files, snapshotting reference-touched files, the
+  post-cutoff suspect_copy gate) that arena mode needs identically, so it
+  was factored out rather than copy-pasted. Pure extraction; v1's own
+  tests (`TestRunOneTask_*`) were not changed and still pass.
+- **The task brief's lane path shorthand "php" is "laravel" in practice**:
+  status-nuxt has no `tests/php.post.ts`; the real Laravel/PHPUnit suite's
+  route is `tests/laravel` (`status-nuxt/server/api/tests/laravel.post.ts`,
+  verified by reading the source). `laneForSubsystem("iznik-batch")`
+  returns `"laravel"`; `ParseLaneFailures` and `arenaContainerFor` are
+  named to match.
+- **`ArenaSandbox.Teardown` does `git reset --hard <original-sha>` then
+  `git clean -fd` before reattaching to the original branch (if any),
+  not a plain `git checkout`**: a task leaves the arena's working tree
+  modified (held-out test files applied, the model's own edits, and any
+  brand-new untracked files from a `write` tool call). A plain checkout
+  back to the original ref does not discard those; local changes ride
+  along as uncommitted modifications on top of the "restored" HEAD, which
+  would fail the very "arena must not be dirty" check `NewArenaSandbox`
+  runs for the NEXT task. `git clean -fd` (no `-x`) respects `.gitignore`,
+  so an arena's own real `.env` (gitignored per FreegleDockerWSL's
+  `/.env` rule) survives every Teardown even though it is untracked.
+  Tested by `TestNewArenaSandbox_TeardownRestoresDetachedHeadEvenOnError`
+  (an untracked file and a tracked-file edit both present at Teardown
+  time) and `TestRunOneArenaTask_FailToPassHappyPath` (asserts the arena
+  is clean and back on its original commit after a full task).
+- **No container restart is implemented** for the phrase "restart dev
+  containers when needed": every run_tests/lane invocation in this file
+  execs a FRESH test process each time (`go test`, `npx vitest run`,
+  `php artisan test`/PHPUnit), which reads the current file state at
+  invocation time rather than serving from a long-lived process with its
+  own stale in-memory state. A restart would only matter for a live HTTP
+  dev-server being exercised directly, which none of arena mode's grading
+  paths do. Left as a documented gap rather than an unverifiable,
+  hard-to-test heuristic (e.g. guessing when a container "needs" a
+  restart) for a case that does not arise in the grading paths this task
+  implements.
+- **No fallback default for `COMPOSE_PROJECT_NAME`, plus an explicit
+  refusal when it is literally `"freegle"`**: status-nuxt's own test
+  endpoints default to `process.env.COMPOSE_PROJECT_NAME || 'freegle'`
+  when unset; `readComposeProjectName` here does the opposite (errors on
+  missing/empty) and `ResolveArenaConfig` additionally refuses outright
+  when the value IS the main instance's project name. Either one alone
+  would satisfy "never hardcode the main project name", but a worktree
+  whose `.env` was somehow left pointing at `freegle` is exactly the
+  failure mode DESIGN.md's isolation rule calls "absolute", so both
+  guards are kept. Tested by
+  `TestResolveArenaConfig_RefusesBareMainProjectNameInEnv` and
+  `TestResolveArenaConfig_NeverDefaultsToBareMainProjectName`.
+- **`ArenaConfig` (resolved, validated worktree config) and `ArenaTaskEnv`
+  (one task's container/lane wiring) are separate types**, with
+  `newArenaTaskEnv(arena, subsystem)` doing the per-task translation:
+  `runOneArenaTask` takes an `ArenaTaskEnv` directly rather than an
+  `*ArenaConfig` plus a subsystem string, so tests build one by hand (a
+  fake `TestExecutor`, a `LaneRunner` pointed at an httptest server, or
+  `LaneName: ""` to skip the full-lane check) without needing real Docker
+  or a real status API, mirroring how `runOneTask` takes a `CommandRunner`
+  value directly.
+- **PHP/Laravel held-out grading is still out of scope**, per the existing
+  "Held-out test commands are Go-only in this pass" decision above:
+  arena mode's `arenaContainerFor`/`laneForSubsystem` map `iznik-batch`
+  correctly for when that support lands, and a harvested (non-history)
+  `iznik-batch` task with a configured `[tests]` command already works
+  end to end today, but `selectAgenticTasks` still never selects a
+  history-origin PHP holdout task (`TestCmd` stays empty for those).
+- **`docker exec` argument construction never emits `docker network`
+  subcommands and never defaults to the bare project name**, verified by
+  `TestArenaDockerExecArgs_NeverEmitsNetworkConnect` and
+  `TestResolveArenaConfig_NeverDefaultsToBareMainProjectName`: the arena's
+  containers gain no new network reach as a side effect of grading, and a
+  misconfigured or missing `COMPOSE_PROJECT_NAME` can never silently
+  target the main instance's containers.

@@ -28,6 +28,7 @@ func runEvalAgentic(args []string) error {
 	limit := fs.Int("limit", 0, "maximum agentic-gradable tasks to attempt this run (0 = no limit)")
 	allowNetwork := fs.Bool("allow-network", false, "skip unshare -rn network denial; marks every result untrusted (debugging, or the only way to run when unshare is unavailable)")
 	maxTokens := fs.Int64("max-tokens", 0, "hard-cap total tokens_in+tokens_out for this run (0 = no cap)")
+	arena := fs.Bool("arena", false, "arena mode: run against [evals].arena_path's real FreegleDocker containers instead of an ephemeral local sandbox (DESIGN.md \"Agentic eval v2\"); refuses to start if the arena worktree or its status API is not available")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -42,7 +43,7 @@ func runEvalAgentic(args []string) error {
 	defer db.Close()
 
 	summary, err := agentic.Run(context.Background(), db, cfg, agentic.RunOptions{
-		Backend: *backendFlag, Model: *modelFlag, Limit: *limit, AllowNetwork: *allowNetwork, MaxTokens: *maxTokens,
+		Backend: *backendFlag, Model: *modelFlag, Limit: *limit, AllowNetwork: *allowNetwork, MaxTokens: *maxTokens, Arena: *arena,
 	})
 	if err != nil {
 		return fmt.Errorf("running agentic eval: %w", err)
@@ -54,6 +55,9 @@ func runEvalAgentic(args []string) error {
 
 func printAgenticRunSummary(w io.Writer, s *agentic.RunSummary) {
 	fmt.Fprintf(w, "splitter eval-agentic: run=%d backend=%s model=%s\n", s.RunID, s.Backend, s.Model)
+	if s.Arena {
+		fmt.Fprintln(w, "  arena mode: graded against the arena worktree's real Docker containers")
+	}
 	if s.AllowNetwork {
 		fmt.Fprintln(w, "  -allow-network was set: every result is UNTRUSTED (network denial bypassed)")
 	}

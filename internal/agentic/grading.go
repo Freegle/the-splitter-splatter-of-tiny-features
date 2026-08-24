@@ -21,11 +21,12 @@ type GradeResult struct {
 	ByTest map[string]bool
 }
 
-// RunGrading runs command in the sandbox (with .git parked, network-denied
-// per runner.UseUnshare), the same mechanics as a model-triggered
-// run_tests call, and parses its output into a GradeResult.
-func RunGrading(ctx context.Context, runner CommandRunner, dir, command string) (GradeResult, error) {
-	output, ok, err := runTestsWithParking(ctx, runner, dir, command)
+// RunGrading runs command in the sandbox via tests (the same TestExecutor a
+// task's ToolExecutor uses for its own run_tests calls: v1's CommandRunner
+// parks .git and optionally denies network, arena mode's ArenaRunner execs
+// into the arena's containers), and parses its output into a GradeResult.
+func RunGrading(ctx context.Context, tests TestExecutor, dir, command string) (GradeResult, error) {
+	output, ok, err := tests.RunTests(ctx, dir, command)
 	if err != nil {
 		return GradeResult{}, err
 	}

@@ -137,12 +137,24 @@ func isGitPath(rel string) bool {
 	return false
 }
 
-// ToolExecutor executes one task's tool calls against a Sandbox, tracking
-// cheat flags and the model's own run_tests usage as it goes. Not safe for
-// concurrent use; one ToolExecutor serves exactly one task's loop.
+// TestExecutor runs one run_tests invocation (a model-triggered tool call,
+// or the harness's own baseline/final grading pass, see RunGrading) and
+// returns its combined output and exit status; err is non-nil only when the
+// command could not be run at all, matching CommandRunner.Run's own
+// contract. CommandRunner (v1's local, optionally unshare-network-denied
+// sandbox) and arena mode's ArenaRunner (docker exec into the arena's own
+// containers, see arena.go) both implement it, so ToolExecutor and
+// RunGrading work unchanged against either.
+type TestExecutor interface {
+	RunTests(ctx context.Context, dir, command string) (output string, ok bool, err error)
+}
+
+// ToolExecutor executes one task's tool calls against a sandbox directory,
+// tracking cheat flags and the model's own run_tests usage as it goes. Not
+// safe for concurrent use; one ToolExecutor serves exactly one task's loop.
 type ToolExecutor struct {
-	Sandbox *Sandbox
-	Runner  CommandRunner
+	Dir     string
+	Tests   TestExecutor
 	TestCmd string
 
 	testsRanByModel int
@@ -150,9 +162,12 @@ type ToolExecutor struct {
 	cheatFlags      []CheatFlag
 }
 
-// NewToolExecutor builds a ToolExecutor for one task.
-func NewToolExecutor(sandbox *Sandbox, runner CommandRunner, testCmd string) *ToolExecutor {
-	return &ToolExecutor{Sandbox: sandbox, Runner: runner, TestCmd: testCmd}
+// NewToolExecutor builds a ToolExecutor for one task: dir is the sandbox
+// root every tool path resolves against (v1's ephemeral worktree directory,
+// or arena mode's shared checkout directory), tests runs the task's test
+// command.
+func NewToolExecutor(dir string, tests TestExecutor, testCmd string) *ToolExecutor {
+	return &ToolExecutor{Dir: dir, Tests: tests, TestCmd: testCmd}
 }
 
 // TestsRanByModel returns how many times the model itself successfully
@@ -173,7 +188,7 @@ func (e *ToolExecutor) addFlag(flagType, detail string) {
 // on the returned rel, since some tools (edit/write) should refuse a .git
 // target while others could conceivably differ.
 func (e *ToolExecutor) resolve(userPath string) (resolved, rel string, refused string) {
-	resolved, rel, err := resolveSandboxPath(e.Sandbox.Dir, userPath)
+	resolved, rel, err := resolveSandboxPath(e.Dir, userPath)
 	if err != nil {
 		e.addFlag(CheatFlagEscape, fmt.Sprintf("%q: %v", userPath, err))
 		return "", "", fmt.Sprintf("refused: path %q resolves outside the sandbox", userPath)
@@ -331,7 +346,7 @@ func (e *ToolExecutor) grep(argsJSON json.RawMessage) (string, bool) {
 		if err != nil || looksBinary(data) {
 			return nil
 		}
-		relPath, err := filepath.Rel(e.Sandbox.Dir, p)
+		relPath, err := filepath.Rel(e.Dir, p)
 		if err != nil {
 			relPath = p
 		}
@@ -445,7 +460,7 @@ func (e *ToolExecutor) runTests(ctx context.Context) (string, bool) {
 	if e.TestCmd == "" {
 		return "no test command is configured for this task", true
 	}
-	output, ok, err := runTestsWithParking(ctx, e.Runner, e.Sandbox.Dir, e.TestCmd)
+	output, ok, err := e.Tests.RunTests(ctx, e.Dir, e.TestCmd)
 	if err != nil {
 		return "running tests: " + err.Error(), true
 	}
