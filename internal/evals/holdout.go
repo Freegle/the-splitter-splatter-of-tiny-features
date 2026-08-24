@@ -17,13 +17,36 @@ import (
 // held-out grading payload.
 func SplitTestFiles(files []string, layers map[string]string) (testFiles, nonTestFiles []string) {
 	for _, f := range files {
-		if layerForPath(f, layers) == "tests" {
+		if isTestFile(f) || layerForPath(f, layers) == "tests" {
 			testFiles = append(testFiles, f)
 		} else {
 			nonTestFiles = append(nonTestFiles, f)
 		}
 	}
 	return testFiles, nonTestFiles
+}
+
+// isTestFile classifies a path as a test by its own conventions,
+// independent of the [layers] mapping: layerForPath is first-match over
+// sorted patterns, so a subsystem prefix like "iznik-batch/" shadows the
+// generic "tests/" entry for files inside that subsystem, which silently
+// dropped every php and js holdout.
+func isTestFile(path string) bool {
+	base := filepath.Base(path)
+	switch {
+	case strings.HasSuffix(base, "_test.go"),
+		strings.HasSuffix(base, "Test.php"),
+		strings.HasSuffix(base, ".spec.js"), strings.HasSuffix(base, ".spec.ts"),
+		strings.HasSuffix(base, ".test.js"), strings.HasSuffix(base, ".test.ts"):
+		return true
+	}
+	for _, seg := range strings.Split(filepath.Dir(path), "/") {
+		switch strings.ToLower(seg) {
+		case "tests", "test", "spec", "__tests__":
+			return true
+		}
+	}
+	return false
 }
 
 // HoldoutFile is one held-out test file's post-commit state: either brand

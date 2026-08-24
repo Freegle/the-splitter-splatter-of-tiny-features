@@ -150,3 +150,15 @@ func TestPhpAndVitestCommandDerivation(t *testing.T) {
 		})
 	}
 }
+
+func TestIsTestFileNotShadowedBySubsystemLayer(t *testing.T) {
+	layers := map[string]string{"iznik-batch/": "backend-api", "tests/": "tests", "*_test.*": "tests"}
+	tests, non := SplitTestFiles([]string{
+		"iznik-batch/tests/Unit/Services/FooServiceTest.php",
+		"iznik-batch/app/Services/FooService.php",
+		"iznik-nuxt3/tests/unit/components/GroupSelect.spec.js",
+	}, layers)
+	if len(tests) != 2 || len(non) != 1 {
+		t.Fatalf("classification wrong: tests=%v non=%v", tests, non)
+	}
+}
