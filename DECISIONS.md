@@ -1023,3 +1023,9 @@ and interpretation choices:
   "reproduce this plan document" is weak eval material. seed-history now caps
   docs-nature tasks at a configurable share of inserted tasks
   (-max-docs-share, default 0.3), with the skip counted and printed.
+
+- **Repair outcome**: the three leaky briefs were reset and regenerated under
+  the stronger prompt. Two came back clean; one (the no-progress batch loop)
+  still volunteered a diagnosis sentence, milder than before. Reverse-brief
+  quality is bounded by the judge model; [judge].model is the lever (Sonnet
+  instead of Haiku) when brief quality matters more than pennies.
