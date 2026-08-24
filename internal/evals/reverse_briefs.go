@@ -16,7 +16,7 @@ import (
 const reverseBriefCustomIDPrefix = "rb-"
 
 // reverseBriefInstruction is appended to every reverse-briefs prompt.
-const reverseBriefInstruction = `Write a SHORT problem statement or feature request, in the voice of the person who would have asked for this change BEFORE it existed. Describe only the observed problem or desired behaviour. Do NOT name any function, variable, file, or the specific approach the actual fix used. Do NOT quote or paraphrase the commit message's own wording. Answer with ONLY the rewritten request text: no preamble, no quotes, no markdown.`
+const reverseBriefInstruction = `Write a SHORT problem statement or feature request, in the voice of the person who would have asked for this change BEFORE it existed. Describe only the observed problem or desired behaviour. Do NOT name any function, variable, file, or the specific approach the actual fix used. Do NOT explain WHY the problem happens or what the root cause is: the requester only sees symptoms. Do NOT describe the corrected behaviour, the new value, or what the code does "now": at the time of asking, the change does not exist. Do NOT quote or paraphrase the commit message's own wording. Answer with ONLY the rewritten request text: no preamble, no quotes, no markdown.`
 
 // ReverseBriefsSubmitSummary reports what one `eval reverse-briefs submit`
 // call did.

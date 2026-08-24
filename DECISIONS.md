@@ -1009,3 +1009,17 @@ and interpretation choices:
 - **README split**: Edward: too many subcommands and config items cluttering
   the README. Full tables moved to COMMANDS.md and CONFIG.md; the README keeps
   only the eight commands someone trying it would actually run.
+
+## 2026-08-24 brief quality pass
+
+- **Reverse-brief leaks**: Edward asked to see the actual briefs. Three of 18
+  leaked the answer (one stated the fixed value outright, one handed over the
+  root-cause diagnosis, one described the post-fix behaviour). The rewrite
+  instruction now also forbids explaining why the problem happens and
+  describing what the code does "now". Existing briefs keep working; re-run
+  reverse-briefs after a re-seed to regenerate with the stronger prompt.
+- **Docs commits dominated the sweep** (10 of 18 tasks were markdown, mostly
+  plans/ scratch): size-filtered sweeps love tiny docs commits, and
+  "reproduce this plan document" is weak eval material. seed-history now caps
+  docs-nature tasks at a configurable share of inserted tasks
+  (-max-docs-share, default 0.3), with the skip counted and printed.

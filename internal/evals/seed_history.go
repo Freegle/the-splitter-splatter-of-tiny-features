@@ -76,6 +76,11 @@ type SeedHistoryOptions struct {
 	MaxFiles     int
 	MaxDiffLines int
 	Grep         string
+	// MaxDocsShare caps the fraction of newly inserted tasks whose nature
+	// is docs (0 disables the cap). Small documentation and plan commits
+	// otherwise dominate a size-filtered sweep, and "reproduce this plan
+	// document" is weak eval material next to code fixes.
+	MaxDocsShare float64
 }
 
 // SeedHistorySummary reports what one seed-history run did.
@@ -87,6 +92,7 @@ type SeedHistorySummary struct {
 	SkippedNoCodeFiles int
 	SkippedOversize    int
 	SkippedContextCap  int
+	SkippedDocsShare   int
 }
 
 // SeedHistory seeds the eval library from opts.RepoPath's git history, per
@@ -110,6 +116,7 @@ func SeedHistory(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions) (*Seed
 		return nil, fmt.Errorf("listing candidate commits: %w", err)
 	}
 
+	docsInserted := 0
 	for _, sha := range shas {
 		if opts.Max > 0 && summary.Inserted >= opts.Max {
 			break
@@ -120,13 +127,18 @@ func SeedHistory(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions) (*Seed
 		}
 		summary.Considered++
 
-		inserted, skipReason, err := seedOneCommit(db, cfg, opts, sha)
+		allowDocs := opts.MaxDocsShare <= 0 ||
+			float64(docsInserted+1) <= opts.MaxDocsShare*float64(summary.Inserted+1)
+		inserted, nature, skipReason, err := seedOneCommit(db, cfg, opts, sha, allowDocs)
 		if err != nil {
 			return nil, fmt.Errorf("seeding commit %s: %w", sha, err)
 		}
 		switch {
 		case inserted:
 			summary.Inserted++
+			if nature == "docs" {
+				docsInserted++
+			}
 		case skipReason == skipMergeOrRoot:
 			summary.SkippedMergeOrRoot++
 		case skipReason == skipNoCodeFiles:
@@ -135,6 +147,8 @@ func SeedHistory(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions) (*Seed
 			summary.SkippedOversize++
 		case skipReason == skipContextCap:
 			summary.SkippedContextCap++
+		case skipReason == skipDocsShare:
+			summary.SkippedDocsShare++
 		}
 	}
 
@@ -145,6 +159,7 @@ type skipReason int
 
 const (
 	skipNone skipReason = iota
+	skipDocsShare
 	skipMergeOrRoot
 	skipNoCodeFiles
 	skipOversize
@@ -201,26 +216,26 @@ func listCandidateCommits(opts SeedHistoryOptions) ([]string, error) {
 // reachable here since dedup is handled by the caller before this is
 // called, so skipNone never actually occurs in practice for a false
 // return, but is returned for completeness.
-func seedOneCommit(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions, sha string) (inserted bool, reason skipReason, err error) {
+func seedOneCommit(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions, sha string, allowDocs bool) (inserted bool, natureOut string, reason skipReason, err error) {
 	meta, ok, err := loadCommitMeta(opts.RepoPath, sha)
 	if err != nil {
-		return false, skipNone, err
+		return false, "", skipNone, err
 	}
 	if !ok {
-		return false, skipMergeOrRoot, nil
+		return false, "", skipMergeOrRoot, nil
 	}
 
 	files, err := changedFiles(opts.RepoPath, meta.Parent, sha)
 	if err != nil {
-		return false, skipNone, err
+		return false, "", skipNone, err
 	}
 
 	touched, err := buildSeedTouchedFiles(opts.RepoPath, meta.Parent, sha, files)
 	if err != nil {
-		return false, skipNone, err
+		return false, "", skipNone, err
 	}
 	if len(touched) == 0 {
-		return false, skipNoCodeFiles, nil
+		return false, "", skipNoCodeFiles, nil
 	}
 
 	maxFiles := opts.MaxFiles
@@ -250,38 +265,42 @@ func seedOneCommit(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions, sha 
 		totalDiffLines += tf.ChangedLines
 	}
 	if len(paths) == 0 {
-		return false, skipNoCodeFiles, nil
+		return false, "", skipNoCodeFiles, nil
 	}
 	if len(paths) > maxFiles || totalDiffLines > maxDiffLines {
-		return false, skipOversize, nil
+		return false, "", skipOversize, nil
 	}
 
 	brief := seedBrief(meta.Subject, meta.Body)
 
 	req, err := buildSeedRequest(brief, touched, resolvedMaxAnswerTokens(cfg.Evals))
 	if err != nil {
-		return false, skipNone, err
+		return false, "", skipNone, err
 	}
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
-		return false, skipNone, fmt.Errorf("marshaling synthesized request: %w", err)
+		return false, "", skipNone, fmt.Errorf("marshaling synthesized request: %w", err)
 	}
 	if len(reqJSON) > resolvedSeedContextBytes(cfg.Evals) {
-		return false, skipContextCap, nil
+		return false, "", skipContextCap, nil
 	}
 
 	refJSON, err := buildSeedReferenceMessage(blocks)
 	if err != nil {
-		return false, skipNone, err
+		return false, "", skipNone, err
 	}
 
 	language := Language(paths)
 	layer := Layer(paths, cfg.Layers)
 	nature, natureEvidence := Nature(meta.Subject, paths, cfg.Layers)
 
+	if nature == "docs" && !allowDocs {
+		return false, nature, skipDocsShare, nil
+	}
+
 	followups, err := followupCommits(opts.RepoPath, sha, paths)
 	if err != nil {
-		return false, skipNone, err
+		return false, nature, skipNone, err
 	}
 	difficulty, difficultyEvidence := GitArchaeologyDifficulty(meta.Subject, meta.AuthorDate, followups)
 
@@ -293,11 +312,11 @@ func seedOneCommit(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions, sha 
 	if holdout, hasHoldout := buildHoldoutPayload(touched, cfg.Layers); hasHoldout {
 		holdoutJSON, herr := json.Marshal(holdout)
 		if herr != nil {
-			return false, skipNone, fmt.Errorf("marshaling holdout payload: %w", herr)
+			return false, nature, skipNone, fmt.Errorf("marshaling holdout payload: %w", herr)
 		}
 		holdoutCompressed, err = store.Compress(holdoutJSON)
 		if err != nil {
-			return false, skipNone, fmt.Errorf("compressing holdout payload: %w", err)
+			return false, nature, skipNone, fmt.Errorf("compressing holdout payload: %w", err)
 		}
 		agenticTestCmd = holdout.TestCmd
 	}
@@ -328,11 +347,11 @@ func seedOneCommit(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions, sha 
 
 	reqCompressed, err := store.Compress(reqJSON)
 	if err != nil {
-		return false, skipNone, fmt.Errorf("compressing synthesized request: %w", err)
+		return false, nature, skipNone, fmt.Errorf("compressing synthesized request: %w", err)
 	}
 	refCompressed, err := store.Compress(refJSON)
 	if err != nil {
-		return false, skipNone, fmt.Errorf("compressing synthesized reference: %w", err)
+		return false, nature, skipNone, fmt.Errorf("compressing synthesized reference: %w", err)
 	}
 
 	row := store.EvalTaskRow{
@@ -353,9 +372,9 @@ func seedOneCommit(db *sql.DB, cfg *config.Config, opts SeedHistoryOptions, sha 
 	}
 	_, didInsert, err := store.InsertEvalTask(db, row)
 	if err != nil {
-		return false, skipNone, fmt.Errorf("inserting history eval task for commit %s: %w", sha, err)
+		return false, nature, skipNone, fmt.Errorf("inserting history eval task for commit %s: %w", sha, err)
 	}
-	return didInsert, skipNone, nil
+	return didInsert, nature, skipNone, nil
 }
 
 // seedBrief builds the mechanical commit-subject brief: the subject line

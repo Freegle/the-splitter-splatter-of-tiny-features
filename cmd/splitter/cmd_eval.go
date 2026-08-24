@@ -162,6 +162,7 @@ func runEvalSeedHistory(args []string) error {
 	max := fs.Int("max", 0, "stop once this many new tasks are inserted (0 = no limit)")
 	maxFiles := fs.Int("max-files", 3, "skip a commit touching more than this many eligible files")
 	maxDiffLines := fs.Int("max-diff-lines", 120, "skip a commit with more than this many changed lines")
+	maxDocsShare := fs.Float64("max-docs-share", 0.3, "cap docs/plans commits to this fraction of inserted tasks (0 = no cap)")
 	grep := fs.String("grep", "", "only consider commits whose message matches this pattern")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -183,7 +184,7 @@ func runEvalSeedHistory(args []string) error {
 	}
 
 	summary, err := evals.SeedHistory(db, cfg, evals.SeedHistoryOptions{
-		RepoPath: repo, Since: sinceDate, Max: *max, MaxFiles: *maxFiles, MaxDiffLines: *maxDiffLines, Grep: *grep,
+		RepoPath: repo, Since: sinceDate, Max: *max, MaxFiles: *maxFiles, MaxDiffLines: *maxDiffLines, Grep: *grep, MaxDocsShare: *maxDocsShare,
 	})
 	if err != nil {
 		return fmt.Errorf("seeding eval history: %w", err)
@@ -197,6 +198,7 @@ func runEvalSeedHistory(args []string) error {
 	fmt.Printf("  skipped no code files:  %d\n", summary.SkippedNoCodeFiles)
 	fmt.Printf("  skipped oversize:       %d\n", summary.SkippedOversize)
 	fmt.Printf("  skipped context cap:    %d\n", summary.SkippedContextCap)
+	fmt.Printf("  skipped docs share:     %d\n", summary.SkippedDocsShare)
 	return nil
 }
 

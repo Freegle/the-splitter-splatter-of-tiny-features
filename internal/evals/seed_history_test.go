@@ -455,3 +455,56 @@ index 1111111..2222222 100644
 		t.Errorf("ChangedLines = %d, want 4", parsed.ChangedLines)
 	}
 }
+
+// TestSeedHistoryDocsShareCap proves MaxDocsShare stops documentation
+// commits dominating a sweep: with a cap of 0.5 and two docs commits to
+// one code commit, only one docs task is admitted.
+func TestSeedHistoryDocsShareCap(t *testing.T) {
+	repoPath := t.TempDir()
+	runGit(t, repoPath, "init", "-q")
+	runGit(t, repoPath, "config", "user.email", "t@t")
+	runGit(t, repoPath, "config", "user.name", "t")
+	writeSeedFile(t, repoPath, "base.txt", "base\n")
+	runGit(t, repoPath, "add", "-A")
+	commitGit(t, repoPath, "chore: root", "2026-01-01T10:00:00")
+	writeSeedFile(t, repoPath, "docs/a.md", "# a\n")
+	runGit(t, repoPath, "add", "-A")
+	commitGit(t, repoPath, "docs: first plan note", "2026-01-02T10:00:00")
+	writeSeedFile(t, repoPath, "docs/b.md", "# b\n")
+	runGit(t, repoPath, "add", "-A")
+	commitGit(t, repoPath, "docs: second plan note", "2026-01-03T10:00:00")
+	writeSeedFile(t, repoPath, "main.go", "package main\n\nfunc main() {}\n")
+	runGit(t, repoPath, "add", "-A")
+	commitGit(t, repoPath, "feat: add entry point", "2026-01-04T10:00:00")
+
+	db := openSeedTestDB(t)
+	cfg := config.Default()
+	cfg.RepoPath = repoPath
+	sum, err := SeedHistory(db, cfg, SeedHistoryOptions{RepoPath: repoPath, Since: "2020-01-01", MaxFiles: 3, MaxDiffLines: 120, MaxDocsShare: 0.5})
+	if err != nil {
+		t.Fatalf("SeedHistory: %v", err)
+	}
+	if sum.SkippedDocsShare == 0 {
+		t.Fatalf("docs-share cap never engaged: %+v", sum)
+	}
+	var docs, other int
+	rows, err := db.Query(`SELECT COALESCE(nature,'') FROM eval_tasks`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if n == "docs" {
+			docs++
+		} else {
+			other++
+		}
+	}
+	if docs > other+1 {
+		t.Fatalf("docs tasks (%d) still dominate non-docs (%d) under a 0.5 cap", docs, other)
+	}
+}
