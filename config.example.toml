@@ -37,6 +37,14 @@ base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
 model = "gpt-4o-mini"
 
+# First hosted eval target (Edward, 2026-08-24): cheapest tier-1 model, and a
+# reasoning model, so give it real max_tokens or the answer comes back empty.
+# Also speaks the Anthropic wire format at https://api.deepseek.com/anthropic.
+[backends.deepseek]
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+model = "deepseek-v4-flash"
+
 [judge]
 model = "claude-haiku-4-5"
 api_key_env = "ANTHROPIC_API_KEY"

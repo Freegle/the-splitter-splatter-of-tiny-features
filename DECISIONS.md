@@ -304,3 +304,16 @@ Findings (searched 2026-08-24):
   fix), attempted_git (.git parked during run_tests, failed pokes surface in
   output). Flags demote results to the untrusted segment, humans audit the stored
   transcript.
+
+## 2026-08-24 first eval target: DeepSeek V4 Flash
+
+- Edward: "We're going to want to test initially DeepSeek V4 Flash to see how
+  bright it can get." Key discovered in ~/deepseek (Edward's own Claude-Code-via-
+  DeepSeek env script), validated against /models and /chat/completions, added to
+  ~/.config/splitter/env as DEEPSEEK_API_KEY, [backends.deepseek] wired
+  (base https://api.deepseek.com, model deepseek-v4-flash). Flash is a REASONING
+  model: responses carry reasoning_content and small max_tokens budgets yield empty
+  answers; eval calls must keep the 4096-token default or higher, and the
+  translation layer drops reasoning_content like thinking blocks. "How bright can
+  it get" is precisely the per-track ladder question; its cutoff goes into
+  [model_cutoffs] when known.

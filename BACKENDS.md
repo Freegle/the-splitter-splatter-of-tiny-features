@@ -29,7 +29,7 @@ Claude for scale: Opus $5/$25, Sonnet $3/$15, Haiku $1/$5 per MTok.
 
 | Model | $/MTok in/out | Anthropic-compatible | Key held? |
 |---|---|---|---|
-| DeepSeek V4 Flash | $0.14/$0.28 | YES: api.deepseek.com/anthropic (documented Claude Code integration) | no |
+| DeepSeek V4 Flash | $0.14/$0.28 | YES: api.deepseek.com/anthropic (documented Claude Code integration) | YES: ~/deepseek env script, wired as [backends.deepseek], validated 2026-08-24. NOTE: reasoning model (reasoning_content in responses); empty answers under tiny max_tokens |
 | DeepSeek V4 Pro | ~$0.87 out | YES | no |
 | Kimi K2.6 / K2.7-code | $0.95/$4.00 | YES | no |
 | Kimi K3 | $3/$15 ($0.30 cache hits) | YES | no |
@@ -43,11 +43,25 @@ Claude for scale: Opus $5/$25, Sonnet $3/$15, Haiku $1/$5 per MTok.
   proxy. The planned follow-up is a `kind = "anthropic"` backend type (the
   anthropic-native client already exists for eval runs); until then the
   OpenAI-compatible surfaces work through the existing translation layer.
-- No keys are held for GLM/Kimi/DeepSeek yet. Wiring them is a signup decision for
-  Edward; env names reserved: GLM_API_KEY, KIMI_API_KEY, DEEPSEEK_API_KEY.
+- DeepSeek is wired (DEEPSEEK_API_KEY from ~/deepseek, [backends.deepseek]). No
+  keys are held for GLM/Kimi; wiring them is a signup decision for Edward, env
+  names reserved: GLM_API_KEY, KIMI_API_KEY.
 - The contamination guard applies to validation: public-benchmark claims (94.6% of
   Opus etc.) say nothing about Vue/Nuxt + Go on this codebase; post-cutoff
   eval-library segments are the trustworthy comparison.
+
+## First eval target (Edward, 2026-08-24)
+
+DeepSeek V4 Flash is the first hosted model to ladder-test ("see how bright it can
+get"): key found in ~/deepseek and validated, backend wired. Run once eval tasks
+exist:
+
+    splitter eval run -backend deepseek            # single-turn ladder
+    splitter eval run -backend deepseek -mode agentic
+
+The ladder climbs per language track until futility, so the scorecard directly
+answers the ceiling question, split by post/pre-cutoff segments (DeepSeek V4
+family cutoff needs adding to [model_cutoffs] when published).
 
 ## Recommendation (2026-08-24)
 
