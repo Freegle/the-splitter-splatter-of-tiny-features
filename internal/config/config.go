@@ -35,6 +35,32 @@ type Config struct {
 	// from the DESIGN.md defaults for this codebase family; consumers match
 	// a touched file's path against these patterns to derive its layer.
 	Layers map[string]string `toml:"layers"`
+
+	// Evals controls the eval library's ladder evaluation (internal/evals).
+	Evals EvalsConfig `toml:"evals"`
+
+	// ModelCutoffs maps a model family or exact model id to its training
+	// data cutoff as "YYYY-MM", the eval library's contamination guard
+	// (DESIGN.md "task_date + contamination guard"). An exact model id
+	// match wins over a family match.
+	ModelCutoffs map[string]string `toml:"model_cutoffs"`
+}
+
+// EvalsConfig controls the eval library's per-track ladder evaluation
+// (DESIGN.md "Ladder evaluation").
+type EvalsConfig struct {
+	// LadderTrack selects what a "track" is: "language" (default, a model
+	// can be past its ceiling on one language while still climbing
+	// another), "layer", or "none" for one global ladder.
+	LadderTrack string `toml:"ladder_track"`
+	// StopWilsonUpper abandons a rung (and all higher rungs in its track)
+	// once the Wilson UPPER bound of its pass rate drops below this value,
+	// with at least StopMinN scored tasks.
+	StopWilsonUpper float64 `toml:"stop_wilson_upper"`
+	StopMinN        int     `toml:"stop_min_n"`
+	// FutilityConsecutiveFails abandons a rung immediately after this many
+	// consecutive failures with zero passes, regardless of StopMinN.
+	FutilityConsecutiveFails int `toml:"futility_consecutive_fails"`
 }
 
 // ReplayConfig controls the Phase 3 replay worker.
@@ -137,6 +163,13 @@ func Default() *Config {
 		},
 		Families: map[string]string{},
 		Layers:   defaultLayers(),
+		Evals: EvalsConfig{
+			LadderTrack:              "language",
+			StopWilsonUpper:          0.2,
+			StopMinN:                 8,
+			FutilityConsecutiveFails: 6,
+		},
+		ModelCutoffs: map[string]string{},
 	}
 }
 

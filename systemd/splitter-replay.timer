@@ -1,0 +1,21 @@
+# Triggers splitter-replay.service hourly. Persistent=true catches up a
+# missed tick (e.g. the machine was off) at next boot/login instead of
+# waiting for the next scheduled hour, matching BRIEF.md's framing of
+# non-proxy hours as idle compute that should get used when available.
+#
+# Install: see scripts/install.sh, or manually:
+#   mkdir -p ~/.config/systemd/user
+#   cp systemd/splitter-replay.service systemd/splitter-replay.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now splitter-replay.timer
+
+[Unit]
+Description=Hourly trigger for the splitter Phase 3/4 batch pipeline
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=splitter-replay.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,23 @@
+# Splitter Phase 1 pass-through logging proxy, user unit.
+#
+# Claude Code points at this proxy via ANTHROPIC_BASE_URL (see README.md).
+# Config comes from ~/.config/splitter/config.toml and
+# ~/.config/splitter/env; this unit passes no environment of its own.
+#
+# Install: see scripts/install.sh, or manually:
+#   mkdir -p ~/.config/systemd/user
+#   cp systemd/splitter-proxy.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now splitter-proxy.service
+
+[Unit]
+Description=Splitter pass-through logging proxy for Claude Code
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/splitter proxy
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

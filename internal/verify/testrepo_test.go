@@ -17,7 +17,13 @@ func newTestRepo(t *testing.T, goFileRel, goFileContent string) (repoPath, commi
 	repoPath = t.TempDir()
 
 	runGit(t, repoPath, "init", "-q")
-	runGit(t, repoPath, "-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "--allow-empty", "-q", "-m", "root")
+	// The host's global git config sets core.autocrlf=true; without this,
+	// `git worktree add` checkouts of a throwaway repo would convert LF to
+	// CRLF and make every gofmt check spuriously report "not formatted".
+	// Mirrors splitter's own repo-root .gitattributes.
+	writeRepoFile(t, repoPath, ".gitattributes", "* text=auto eol=lf\n")
+	runGit(t, repoPath, "add", "-A")
+	runGit(t, repoPath, "-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "-q", "-m", "root")
 
 	writeRepoFile(t, repoPath, "go.mod", "module example.com/testrepo\n\ngo 1.21\n")
 	writeRepoFile(t, repoPath, goFileRel, goFileContent)

@@ -184,6 +184,31 @@ func GetVerificationLint(db *sql.DB, verificationID int64) (VerificationLint, er
 	return v, nil
 }
 
+// VerificationDecision is the subset of one verifications row that
+// reflects its current cascade decision: which stage decided it, whether
+// it agreed (NULL while still queued for judge arbitration), and whether
+// the tests-vs-judge conflict rule fired.
+type VerificationDecision struct {
+	Stage        string
+	Agree        sql.NullInt64
+	Conflict     bool
+	JudgeVerdict sql.NullString
+}
+
+// GetVerificationDecision fetches verificationID's current stage, agree
+// and tests_judge_conflict values, used by the judge poll tests and any
+// caller that needs to observe a verification's decision after the fact.
+func GetVerificationDecision(db *sql.DB, verificationID int64) (VerificationDecision, error) {
+	var d VerificationDecision
+	var conflict int
+	row := db.QueryRow(`SELECT stage, agree, tests_judge_conflict, judge_verdict FROM verifications WHERE id = ?`, verificationID)
+	if err := row.Scan(&d.Stage, &d.Agree, &conflict, &d.JudgeVerdict); err != nil {
+		return VerificationDecision{}, fmt.Errorf("getting verification %d decision: %w", verificationID, err)
+	}
+	d.Conflict = conflict != 0
+	return d, nil
+}
+
 // UpdateVerificationJudgeDecision records the judge stage's decision for a
 // verification: its judge_verdict JSON, the final agree value (after the
 // tests-win conflict rule), whether that rule found a conflict, and marks

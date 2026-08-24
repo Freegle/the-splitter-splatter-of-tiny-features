@@ -14,6 +14,7 @@ import (
 
 	"github.com/freegle/splitter/internal/config"
 	"github.com/freegle/splitter/internal/proxy"
+	"github.com/freegle/splitter/internal/router"
 	"github.com/freegle/splitter/internal/store"
 )
 
@@ -57,10 +58,23 @@ func runProxy(args []string) error {
 		return fmt.Errorf("migrating store: %w", err)
 	}
 
+	// The live router is always built (cheap: an empty in-memory
+	// snapshot until refreshed) so SPLITTER_ROUTE=on takes effect without
+	// a restart-free code path being needed; live routing itself stays
+	// gated by router.RouteEnabled() at request time, default off.
+	liveRouter := router.NewLiveRouter(db, cfg)
+	if err := liveRouter.RefreshSnapshot(); err != nil {
+		log.Printf("splitter: proxy: initial router snapshot refresh: %v", err)
+	}
+	liveRouter.Start()
+	defer liveRouter.Stop()
+
 	proxySrv, err := proxy.New(proxy.Config{
-		Upstream: cfg.Upstream,
-		DB:       db,
-		RepoPath: cfg.RepoPath,
+		Upstream:        cfg.Upstream,
+		DB:              db,
+		RepoPath:        cfg.RepoPath,
+		Router:          liveRouter,
+		FamilyOverrides: cfg.Families,
 	})
 	if err != nil {
 		return fmt.Errorf("building proxy: %w", err)

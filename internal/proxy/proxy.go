@@ -19,6 +19,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/freegle/splitter/internal/router"
 )
 
 const (
@@ -52,13 +54,26 @@ type Config struct {
 	// RepoPath is the target repository whose HEAD is recorded against
 	// each captured call. Empty disables HEAD capture.
 	RepoPath string
+	// Router, when non-nil, enables Phase 4 live routing (still gated at
+	// request time by SPLITTER_ROUTE=on; see internal/router.RouteEnabled).
+	// A nil Router (the default, matching every Phase 1 caller) makes the
+	// live routing path entirely inert: pure pass-through, byte for byte
+	// the same as before Phase 4 existed.
+	Router *router.LiveRouter
+	// FamilyOverrides is config.Config.Families, the [families] table
+	// live routing consults ahead of internal/router.Family's built-in
+	// normalisation rules.
+	FamilyOverrides map[string]string
 }
 
 // Server is a pass-through logging proxy. It implements http.Handler.
 type Server struct {
-	upstream *url.URL
-	client   *http.Client
-	logger   *callLogger
+	upstream        *url.URL
+	client          *http.Client
+	logger          *callLogger
+	repoPath        string
+	router          *router.LiveRouter
+	familyOverrides map[string]string
 }
 
 // New builds a Server from cfg and starts its async logger goroutine.
@@ -76,9 +91,12 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	s := &Server{
-		upstream: u,
-		client:   &http.Client{Transport: transport},
-		logger:   newCallLogger(cfg.DB, cfg.RepoPath, loggerBufSize),
+		upstream:        u,
+		client:          &http.Client{Transport: transport},
+		logger:          newCallLogger(cfg.DB, cfg.RepoPath, loggerBufSize),
+		repoPath:        cfg.RepoPath,
+		router:          cfg.Router,
+		familyOverrides: cfg.FamilyOverrides,
 	}
 	s.logger.start()
 	return s, nil

@@ -72,6 +72,11 @@ func (s *Server) handleCaptured(w http.ResponseWriter, r *http.Request, body []b
 
 	sessionID := sessionIDFunc(r.Header.Get("User-Agent"), &parsedReq)
 
+	routeOut := s.routeDecision(r.Context(), w, parsedReq, sessionID)
+	if routeOut.servedLocally {
+		return
+	}
+
 	upReq, err := s.buildUpstreamRequest(r.Context(), r, body)
 	if err != nil {
 		writeUpstreamError(w, err)
@@ -91,6 +96,10 @@ func (s *Server) handleCaptured(w http.ResponseWriter, r *http.Request, body []b
 	isSSE := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 	captured := newCapBuffer(maxCaptureBytes)
 	relayBody(w, resp.Body, captured)
+
+	if routeOut.shadow {
+		s.finishShadow(routeOut, parsedReq, captured.Bytes(), isSSE)
+	}
 
 	procError := ""
 	if captured.truncated {

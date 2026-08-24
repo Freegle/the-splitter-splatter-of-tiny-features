@@ -216,7 +216,10 @@ CREATE TABLE IF NOT EXISTS eval_runs (
   backend TEXT NOT NULL,
   model TEXT NOT NULL,
   tasks_total INTEGER,
-  tasks_passed INTEGER
+  tasks_passed INTEGER,
+  ladder TEXT,              -- JSON: per-track stop rung and evidence
+  tokens_in INTEGER,
+  tokens_out INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS eval_results (

@@ -65,6 +65,19 @@ min_n = 30
 min_wilson_lb = 0.9
 dual_dispatch_pct = 5
 
+[evals]
+ladder_track = "language"          # or "layer", or "none" for one global ladder
+stop_wilson_upper = 0.2            # abandon a rung (and higher) once its Wilson upper bound drops below this
+stop_min_n = 8                     # ... with at least this many scored tasks
+futility_consecutive_fails = 6     # or abandon immediately after this many consecutive zero-pass failures
+
+[model_cutoffs]
+# family or exact model id -> training data cutoff "YYYY-MM", the eval
+# library's contamination guard. An exact model id match wins over a
+# family match.
+# "claude-sonnet" = "2026-02"
+# "deepseek-v4-flash" = "2026-01"
+
 [families]
 # override internal/router.Family for specific exact model ids, e.g.:
 # "claude-opus-4-6-20260101" = "claude-opus-custom"
