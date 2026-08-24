@@ -1,0 +1,35 @@
+{
+  "label": "tool_result_summary",
+  "notes": "Last user message is a tool_result (a Read call's output as a bare string), response is text-only.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      { "role": "user", "content": "What does internal/config/config.go's Load function do?" },
+      {
+        "role": "assistant",
+        "content": [
+          { "type": "tool_use", "id": "toolu_11A1", "name": "Read", "input": { "file_path": "/home/edward/FreegleDockerWSL/internal/config/config.go" } }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_11A1",
+            "content": "package config\n\nfunc Load(path string) (*Config, error) {\n\t// resolves config path precedence, decodes TOML, expands tildes, loads env file\n}\n"
+          }
+        ]
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Load resolves the config file via a precedence chain (explicit path, $SPLITTER_CONFIG, the default location), decodes it over the built-in defaults, expands tilde paths, and loads the referenced env file into the process environment."
+      }
+    ]
+  }
+}

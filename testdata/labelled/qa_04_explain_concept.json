@@ -1,0 +1,19 @@
+{
+  "label": "question_answer",
+  "notes": "Conceptual explanation question, text-only answer.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      { "role": "user", "content": "What is a Wilson lower bound and why use it instead of a raw agreement rate for the router?" }
+    ]
+  },
+  "response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "A Wilson lower bound is a confidence-interval estimate of a proportion that accounts for sample size: with few observations it sits well below the raw rate, and it converges to the raw rate as n grows. Using it instead of the raw agreement rate means a category with only a handful of agreeing replays cannot look routable just by chance."
+      }
+    ]
+  }
+}

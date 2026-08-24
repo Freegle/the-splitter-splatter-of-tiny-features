@@ -1,0 +1,45 @@
+{
+  "label": "multi_file_edit",
+  "notes": "Tricky case: two MultiEdit blocks, each against a different file. >=2 edit-family blocks and >=2 distinct files, even though neither block alone touches more than one file.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Both cmd_replay.go and cmd_judge.go build their flag usage strings by hand in three places each. Tidy them up to use fs.Usage consistently."
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "text", "text": "Cleaning up flag usage in both command files." },
+      {
+        "type": "tool_use",
+        "id": "toolu_07A1",
+        "name": "MultiEdit",
+        "input": {
+          "file_path": "/home/edward/FreegleDockerWSL/cmd/splitter/cmd_replay.go",
+          "edits": [
+            { "old_string": "fmt.Fprintln(os.Stderr, \"usage: splitter replay\")", "new_string": "fs.Usage()" },
+            { "old_string": "fmt.Fprintln(os.Stderr, \"  -backend name\")", "new_string": "" },
+            { "old_string": "fmt.Fprintln(os.Stderr, \"  -limit N\")", "new_string": "" }
+          ]
+        }
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_07A2",
+        "name": "MultiEdit",
+        "input": {
+          "file_path": "/home/edward/FreegleDockerWSL/cmd/splitter/cmd_judge.go",
+          "edits": [
+            { "old_string": "fmt.Fprintln(os.Stderr, \"usage: splitter judge\")", "new_string": "fs.Usage()" },
+            { "old_string": "fmt.Fprintln(os.Stderr, \"  submit\")", "new_string": "" },
+            { "old_string": "fmt.Fprintln(os.Stderr, \"  poll\")", "new_string": "" }
+          ]
+        }
+      }
+    ]
+  }
+}

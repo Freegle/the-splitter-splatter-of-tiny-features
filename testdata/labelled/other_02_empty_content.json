@@ -1,0 +1,14 @@
+{
+  "label": "other",
+  "notes": "Degenerate case: empty response content (e.g. an upstream error body with no content array). Not text-only (no text block at all), not an edit, not a plan: falls to other.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      { "role": "user", "content": "Deploy the latest build to production." }
+    ]
+  },
+  "response": {
+    "content": []
+  }
+}

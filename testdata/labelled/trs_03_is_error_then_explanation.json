@@ -1,0 +1,36 @@
+{
+  "label": "tool_result_summary",
+  "notes": "Tricky case: the tool_result carries is_error true, but the model's response to it is a plain text explanation with no further tool calls, so it is still tool_result_summary (this turn's own error-followup signal is about the NEXT call, not this one).",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      { "role": "user", "content": "Open internal/eval/scorecard.go and summarise the ladder logic." },
+      {
+        "role": "assistant",
+        "content": [
+          { "type": "tool_use", "id": "toolu_13A1", "name": "Read", "input": { "file_path": "/home/edward/FreegleDockerWSL/internal/eval/scorecard.go" } }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_13A1",
+            "is_error": true,
+            "content": "Error: file not found: internal/eval/scorecard.go"
+          }
+        ]
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "That file doesn't exist yet; the eval package hasn't been built. Would you like me to look at DESIGN.md's Eval library section instead, or scaffold the file?"
+      }
+    ]
+  }
+}

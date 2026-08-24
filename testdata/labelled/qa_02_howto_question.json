@@ -1,0 +1,16 @@
+{
+  "label": "question_answer",
+  "notes": "How-to question answered entirely in prose, no tool use.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      { "role": "user", "content": "How do I run just the internal/feature tests for this module?" }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "text", "text": "From the repo root, run: go test ./internal/feature/...  Add -v for per-test output, or -run TestName to run one test." }
+    ]
+  }
+}

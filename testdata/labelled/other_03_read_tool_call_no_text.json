@@ -1,0 +1,16 @@
+{
+  "label": "other",
+  "notes": "Response is a single Read tool_use with no accompanying text: not text-only, not an edit-family tool, so it is other rather than question_answer or tool_result_summary.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      { "role": "user", "content": "Take a look at internal/feature/pricing.go before we discuss it." }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "tool_use", "id": "toolu_17A1", "name": "Read", "input": { "file_path": "/home/edward/FreegleDockerWSL/internal/feature/pricing.go" } }
+    ]
+  }
+}

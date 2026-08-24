@@ -1,0 +1,17 @@
+{
+  "label": "other",
+  "notes": "Response has a Bash tool_use, which is not an edit-family tool, so it's not an edit turn; the response also isn't text-only because of the tool_use block, so it falls through every rule to other.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      { "role": "user", "content": "Run go vet across the whole module." }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "text", "text": "Running go vet now." },
+      { "type": "tool_use", "id": "toolu_16A1", "name": "Bash", "input": { "command": "go vet ./..." } }
+    ]
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "label": "plan",
+  "notes": "Thinking block precedes the plan text and the ExitPlanMode call; thinking never disqualifies text-only status but the ExitPlanMode tool_use is what triggers the plan rule here regardless.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks. Plan mode is active.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Investigate why the replay worker sometimes leaves worktrees behind and propose a fix plan."
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      {
+        "type": "thinking",
+        "thinking": "The likely cause is a missing defer if the verification step panics or is killed mid-run. I should propose a startup sweep as a second line of defence.",
+        "signature": "sig-abc123"
+      },
+      {
+        "type": "text",
+        "text": "The likely cause is a missing cleanup path when a verification step is killed. Plan: add a defer/trap around worktree creation, plus a startup sweep that deletes stale /tmp/splitter-verify-* directories older than 1 hour."
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_10A1",
+        "name": "ExitPlanMode",
+        "input": {
+          "plan": "Add defer-based cleanup plus a startup sweep for stale worktrees."
+        }
+      }
+    ]
+  }
+}

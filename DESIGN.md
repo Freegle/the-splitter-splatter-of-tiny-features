@@ -580,6 +580,21 @@ engineer something"). The brief must be the ASK, never the answer:
   is the human's initiating instruction; fall back to the first 120 chars of the
   task call's own last user text when no session chain exists. brief_source
   ('session' or 'call') is recorded in the characteristics JSON.
+- Discourse-sourced briefs (Edward: "some of the fixes we've done would just be us
+  pointing you at the discourse thread"): many tasks began life as a report on
+  discourse.ilovefreegle.org. When a Discourse topic URL appears in the commit
+  message body, the PR body for the commit (gh pr list --search sha, PRs embed the
+  Discourse link by repo convention), or the initiating session message, fetch the
+  topic's FIRST POST ONLY via the topic .json endpoint with an Api-Key header
+  (VERIFIED 2026-08-24: this forum 403s unauthenticated reads; the key is read from
+  DISCOURSE_API_KEY in the env file, currently held on the prod batch host, not
+  this machine, so discourse briefs are skipped with a counted warning until the
+  key is added; later posts often contain the diagnosis and would leak the fix, so
+  first post only), strip quotes/HTML, and use it as the brief with brief_source
+  'discourse'.
+  The reference URL is kept in characteristics. Discourse beats every other source
+  when present (it is the authentic pre-fix ask in the reporter's own words); the
+  session message is second, reverse-engineering last.
 - History-sourced tasks: the commit subject describes the CHANGE post-hoc and often
   prescribes the fix, which would turn the eval into instruction-following. So
   seed-history stores the mechanical commit-subject brief (brief_source

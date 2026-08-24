@@ -317,3 +317,69 @@ Findings (searched 2026-08-24):
   translation layer drops reasoning_content like thinking blocks. "How bright can
   it get" is precisely the per-track ladder question; its cutoff goes into
   [model_cutoffs] when known.
+
+## 2026-08-24 Phase 2 featuriser (internal/feature)
+
+- **"Response is text-only" includes a preceding thinking block**: DESIGN.md's
+  rules 4-5 gate on "response content is text-only" without addressing extended
+  thinking. Interpreted as: at least one text block, and no block of any type
+  other than text or thinking (a thinking block never disqualifies). Otherwise a
+  perfectly ordinary tool_result_summary or question_answer turn that happens to
+  think first would misclassify as `other`.
+- **"plan mode is active" and the tool_result error-text check are both
+  case-insensitive**. DESIGN.md quotes the phrase verbatim and lists two literal
+  forms ("Error"/"error:") for the error-text check; matching case-insensitively
+  covers both quoted forms and any other capitalisation a system prompt or tool
+  actually uses, and is strictly more permissive than picking one literal form.
+- **files_touched is deduplicated, first-encounter order preserved**. DESIGN.md
+  says "paths extracted from tool calls in the response" without stating whether
+  a file edited twice (e.g. two Edit blocks on the same path) appears once or
+  twice; a routing feature should describe which files were touched, not how many
+  edit calls hit them, so duplicates collapse.
+- **had_error_followup for a session's newest call stays NULL forever, and
+  featurise reprocesses it on every run** until a further call arrives in that
+  session. This falls directly out of "NULL when there is no next call yet
+  (re-running featurise later fills it in)": there is no way to distinguish
+  "not checked yet" from "no next call exists yet" without a separate marker,
+  and DESIGN.md does not ask for one. The reprocessing is idempotent (same NULL
+  result each time) and cheap, so it is left as the simpler behaviour rather than
+  adding a sentinel to distinguish the two NULL cases.
+- **PricingFor's family normaliser (`pricingFamily`) is intentionally narrower
+  than the DESIGN.md "Model families" `internal/router.Family` spec**: it only
+  strips date suffixes and pure-digit/dot version segments from a dash-separated
+  model id, which is enough to satisfy the four required examples
+  (claude-opus-5[-date] -> claude-opus, claude-sonnet-4-6 -> claude-sonnet,
+  claude-haiku-4-5[@date] -> claude-haiku) but does not implement the
+  colon-suffix or slash-namespace handling `Family` needs for qwen/together
+  model ids, since PricingFor only ever prices the logged frontier (Claude)
+  model. Kept in its own file behind `PricingFor(model string) Pricing` per the
+  task brief, so the router component can later replace the body of
+  `pricingFamily` with a call to `router.Family` without changing PricingFor's
+  signature or any caller.
+- **`splitter report spend` sorts turn_type rows by descending estimated cost**
+  (ties broken alphabetically) rather than DESIGN.md's schema column order,
+  since the report's stated purpose is "this is also the business case: it
+  shows where the money goes" (BRIEF.md Phase 2 acceptance), which reads best
+  biggest-spend-first.
+- **testdata/labelled/ lives at the repo root**, not nested under
+  internal/feature, matching the top-level `testdata/` entry in DESIGN.md's
+  "Layout and ownership" tree; internal/feature's fixture-loading test reaches
+  it via a `../../testdata/labelled` relative path (go test's working directory
+  is always the package directory).
+- **internal/config/config_test.go's `TestLoad_ExampleConfigParses` currently
+  fails** (`len(Backends) = 5, want 4`): a concurrently-built task added
+  `[backends.deepseek]` to config.example.toml (see "2026-08-24 first eval
+  target: DeepSeek V4 Flash" above) without updating this hardcoded count. Left
+  untouched: internal/config and its tests belong to a different component and
+  this task's instructions are to add new files, not edit files owned by other
+  components, without a task-specific reason to do otherwise.
+
+## 2026-08-24 Discourse briefs
+
+- Edward: "You can maybe also find briefings from Discourse, 'cause some of the
+  fixes we've done would just be us pointing you at the discourse thread."
+  Brief-source priority is now discourse > session > call > reverse_engineered >
+  commit_subject. Discourse linkage is mechanical (topic URLs in commit bodies, PR
+  bodies which embed Discourse links by repo convention, or session messages);
+  FIRST post only via the public topic JSON endpoint, because later posts carry the
+  diagnosis and would leak the fix.

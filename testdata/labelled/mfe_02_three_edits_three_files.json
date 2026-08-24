@@ -1,0 +1,49 @@
+{
+  "label": "multi_file_edit",
+  "notes": "Three Edit blocks across three distinct files.",
+  "request": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are Claude Code, an interactive CLI tool for software engineering tasks.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "The store, proxy and config packages all import \"github.com/freegle/splitter/internal/anthropic\" with an unused alias \"anth\". Drop the alias in all three."
+      }
+    ]
+  },
+  "response": {
+    "content": [
+      { "type": "text", "text": "Removing the unused import alias in all three files." },
+      {
+        "type": "tool_use",
+        "id": "toolu_06A1",
+        "name": "Edit",
+        "input": {
+          "file_path": "/home/edward/FreegleDockerWSL/internal/store/store.go",
+          "old_string": "anth \"github.com/freegle/splitter/internal/anthropic\"",
+          "new_string": "\"github.com/freegle/splitter/internal/anthropic\""
+        }
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_06A2",
+        "name": "Edit",
+        "input": {
+          "file_path": "/home/edward/FreegleDockerWSL/internal/proxy/proxy.go",
+          "old_string": "anth \"github.com/freegle/splitter/internal/anthropic\"",
+          "new_string": "\"github.com/freegle/splitter/internal/anthropic\""
+        }
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_06A3",
+        "name": "Edit",
+        "input": {
+          "file_path": "/home/edward/FreegleDockerWSL/internal/config/config.go",
+          "old_string": "anth \"github.com/freegle/splitter/internal/anthropic\"",
+          "new_string": "\"github.com/freegle/splitter/internal/anthropic\""
+        }
+      }
+    ]
+  }
+}
