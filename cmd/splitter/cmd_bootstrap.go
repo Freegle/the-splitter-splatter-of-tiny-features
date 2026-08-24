@@ -1,9 +1,13 @@
 package main
 
 import (
+	"database/sql"
+	"os"
+
 	"context"
 	"flag"
 	"fmt"
+	"github.com/freegle/splitter/internal/router"
 	"strings"
 	"time"
 
@@ -53,6 +57,8 @@ func runBootstrap(args []string) error {
 		return fmt.Errorf("bootstrap: seeding history: %w", err)
 	}
 
+	var bootDB *sql.DB
+	var bootCfg *config.Config
 	if !*skipBriefs {
 		step(2, "rewriting briefs so commit messages do not give the fix away")
 		cfg, err := config.Load(*configPath)
@@ -64,6 +70,7 @@ func runBootstrap(args []string) error {
 			return fmt.Errorf("bootstrap: opening store: %w", err)
 		}
 		defer db.Close()
+		bootDB, bootCfg = db, cfg
 		jcfg := judge.Config{
 			Upstream:        cfg.Upstream,
 			APIKeyEnv:       cfg.Judge.APIKeyEnv,
@@ -116,13 +123,27 @@ func runBootstrap(args []string) error {
 	}
 
 	step(stepN, "computing routing candidates from the evidence so far")
-	routerArgs := []string{"update"}
-	if *configPath != "" {
-		routerArgs = append(routerArgs, "-config", *configPath)
+	// Reuses the connection opened for reverse-briefs above (or opens one
+	// now if -skip-briefs left it nil): a fresh store.Open at this point
+	// has twice hit a transient WAL disk I/O error right after the heavy
+	// eval write load, so the registry's own "router update" is not used.
+	if bootDB == nil {
+		cfg, err := config.Load(*configPath)
+		if err != nil {
+			return fmt.Errorf("bootstrap: loading config: %w", err)
+		}
+		bootDB, err = store.Open(cfg.DBPath)
+		if err != nil {
+			return fmt.Errorf("bootstrap: opening store: %w", err)
+		}
+		defer bootDB.Close()
+		bootCfg = cfg
 	}
-	if err := commands["router"](routerArgs); err != nil {
+	result, err := router.Update(bootDB, bootCfg)
+	if err != nil {
 		return fmt.Errorf("bootstrap: router update: %w", err)
 	}
+	writeRouterUpdateTable(os.Stdout, result)
 
 	fmt.Println("\nbootstrap done. Routable rows above are your candidates; categories")
 	fmt.Println("below the bar need more tasks (seed more history, raise -max) or more")

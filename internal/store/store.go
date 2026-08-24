@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 	_ "modernc.org/sqlite"
@@ -44,8 +45,15 @@ func Open(path string) (*sql.DB, error) {
 	}
 
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("setting WAL mode on %s: %w", path, err)
+		// A fresh connection can transiently hit a disk I/O error here
+		// when another connection in the same process has just been
+		// writing WAL heavily (seen twice from bootstrap's post-eval
+		// router step). One short-delay retry clears it.
+		time.Sleep(250 * time.Millisecond)
+		if _, retryErr := db.Exec("PRAGMA journal_mode=WAL"); retryErr != nil {
+			db.Close()
+			return nil, fmt.Errorf("setting WAL mode on %s: %w", path, err)
+		}
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
 		db.Close()
