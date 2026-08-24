@@ -460,7 +460,10 @@ func runOneTask(ctx context.Context, cfg *config.Config, doReplay evals.ReplayFu
 	}
 
 	errText := loopResult.Error
-	passed := !loopResult.bounded() && testsRan > 0 && testsPassed == testsRan && regressions == 0
+	// Bounds stop the loop; they do not veto the grade. The first arena
+	// leg marked a task failed on budget after its held-out tests had
+	// already gone green, which contradicts execution-decides grading.
+	passed := testsRan > 0 && testsPassed == testsRan && regressions == 0
 
 	return taskOutcome{
 		Passed: passed, TestsRan: testsRan, TestsPassed: testsPassed, Regressions: regressions,

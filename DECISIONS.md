@@ -1206,3 +1206,17 @@ interpretation choices:
   rebuilds holdout payloads, so the 16 active tasks seeded before holdout
   derivation existed become agentic-gradable without reseeding (their
   reversed briefs are preserved).
+
+## 2026-08-24 midnight: first arena leg was a harness test, and the harness failed
+
+- DeepSeek's first arena leg: all six tasks dead on "exceeded max_task_tokens
+  (200000)" at 13-16 turns; one task's held-out tests had already gone GREEN
+  and it was still marked failed by the bound. The docker lanes themselves
+  worked (real go test -json output round-tripped). Three fixes, per the
+  transcript evidence: (1) arena tools are rooted at the task's subsystem
+  with tolerant prefix resolution, because monorepo-wide grep floods ate the
+  budget (11 greps, one landing in .circleci, before a single test-fix
+  cycle completed); (2) bounds stop the loop but no longer veto the grade:
+  execution results decide, the bound is recorded as a note; (3) default
+  per-task budget 200k -> 600k. Opus's arena leg stays gated (Edward) until
+  a DeepSeek re-sit under the fixed harness looks sane.

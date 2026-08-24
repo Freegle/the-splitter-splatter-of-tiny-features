@@ -203,7 +203,7 @@ func Default() *Config {
 			StopMinN:                 8,
 			FutilityConsecutiveFails: 6,
 			MaxTurns:                 20,
-			MaxTaskTokens:            200000,
+			MaxTaskTokens:            600000,
 			WallClockMinutes:         10,
 			MaxAnswerTokens:          16384,
 			JudgeModel:               "claude-opus-5",

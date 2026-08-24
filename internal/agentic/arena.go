@@ -607,7 +607,19 @@ func runOneArenaTask(ctx context.Context, cfg *config.Config, doReplay evals.Rep
 		return taskOutcome{Error: "baseline grading: " + err.Error(), AgenticReady: true}
 	}
 
-	exec := NewToolExecutor(sandbox.Dir, env.Tests, testCmd)
+	// Tools are rooted at the task's subsystem, not the whole monorepo:
+	// the first arena leg drowned its token budget in monorepo-wide grep
+	// floods (11 greps, one landing in .circleci, one edit, one test run
+	// before the cap). The request text shows subsystem-prefixed paths, so
+	// the executor also resolves those tolerantly (StripPrefix below).
+	toolRoot := sandbox.Dir
+	if task.Subsystem.Valid && task.Subsystem.String != "" {
+		toolRoot = filepath.Join(sandbox.Dir, task.Subsystem.String)
+	}
+	exec := NewToolExecutor(toolRoot, env.Tests, testCmd)
+	if task.Subsystem.Valid {
+		exec.StripPrefix = task.Subsystem.String + "/"
+	}
 	loopResult := RunLoop(ctx, doReplay, exec, task.Brief, bounds)
 
 	transcriptZstd, cerr := store.Compress(loopResult.TranscriptJSON)
@@ -657,7 +669,10 @@ func runOneArenaTask(ctx context.Context, cfg *config.Config, doReplay evals.Rep
 		}
 	}
 
-	passed := !loopResult.bounded() && testsRan > 0 && testsPassed == testsRan && regressions == 0 && laneErrText == ""
+	// Bounds stop the loop but execution results decide the grade (see
+	// runOneTask; a budget stop with green held-out tests and a clean
+	// lane is a pass, with the bound still recorded in the error note).
+	passed := testsRan > 0 && testsPassed == testsRan && regressions == 0 && laneErrText == ""
 
 	return taskOutcome{
 		Passed: passed, TestsRan: testsRan, TestsPassed: testsPassed, Regressions: regressions,

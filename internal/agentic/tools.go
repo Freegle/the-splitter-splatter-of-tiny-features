@@ -161,6 +161,11 @@ type ToolExecutor struct {
 	// the subsystem directory (arena executors ignore it: their exec
 	// working directory is fixed per container).
 	TestDir string
+	// StripPrefix, when set, is removed from the front of tool path
+	// arguments that carry it: the synthesized request shows
+	// subsystem-prefixed paths while the executor is rooted at the
+	// subsystem itself.
+	StripPrefix string
 
 	testsRanByModel int
 	lastTestOutput  string
@@ -193,6 +198,9 @@ func (e *ToolExecutor) addFlag(flagType, detail string) {
 // on the returned rel, since some tools (edit/write) should refuse a .git
 // target while others could conceivably differ.
 func (e *ToolExecutor) resolve(userPath string) (resolved, rel string, refused string) {
+	if e.StripPrefix != "" && strings.HasPrefix(userPath, e.StripPrefix) {
+		userPath = strings.TrimPrefix(userPath, e.StripPrefix)
+	}
 	resolved, rel, err := resolveSandboxPath(e.Dir, userPath)
 	if err != nil {
 		e.addFlag(CheatFlagEscape, fmt.Sprintf("%q: %v", userPath, err))
