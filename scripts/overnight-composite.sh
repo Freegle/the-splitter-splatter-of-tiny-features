@@ -21,6 +21,13 @@ for i in $(seq 1 120); do
 done
 curl -sf --max-time 5 "http://localhost:$PORT/" > /dev/null || { echo "FATAL: arena API never came back"; exit 1; }
 
+# The arena is disposable by definition: heal any dirt left by an
+# interrupted earlier sitting (defers do not run on SIGTERM) before the
+# sandbox's dirty-refusal turns it into 16 instant failures.
+git -C "$ARENA" reset --hard -q
+git -C "$ARENA" clean -fdq
+git -C "$ARENA" checkout -q master 2>/dev/null || true
+
 set -a; source "$HOME/.config/splitter/env"; set +a
 OAT=$(python3 - << 'PY'
 import json, time, os
