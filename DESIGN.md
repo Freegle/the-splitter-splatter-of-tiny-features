@@ -816,3 +816,23 @@ use the ARENA:
   This is the detection-over-sanitisation stance applied consistently.
 - The arena worktree must NEVER touch the main instance's network, database or
   containers (worktree isolation rules are absolute).
+
+### Parallel arena sittings
+
+A sitting's scheduled tasks split into two pools, run at the same time so
+wall time is the max of the two, not the sum (DECISIONS.md 2026-08-25 has
+the full rationale and file layout):
+- ARENA pool: tasks with a derivable test command. These execute in the
+  shared arena checkout's containers and run STRICTLY SERIALLY, since the
+  checkout holds exactly one commit at a time.
+- JUDGE pool: tasks with no test command (nothing executes). Each runs in
+  its own ephemeral local worktree of repo_path (the v1 sandbox machinery,
+  never the arena checkout), graded by the judge over the candidate's
+  actual working-tree diff exactly as before, with bounded concurrency
+  ([evals].parallel_judge_tasks, default 3).
+- Both pools share one run's ladder, DB writes, token budget and summary
+  tallies through a single mutex-guarded coordinator, so the run-level
+  token budget is a hard cap honoured across both pools and every task is
+  recorded exactly once regardless of which pool ran it or in what order.
+- v1 mode (no -arena) is unaffected: its whole task set still runs through
+  one strictly serial pool.

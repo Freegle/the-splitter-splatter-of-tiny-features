@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/freegle/splitter/internal/anthropic"
@@ -98,22 +99,22 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config, opts RunOptions) (
 
 	var arena *ArenaConfig
 	useUnshare := !opts.AllowNetwork
-	var swept []string
 	if opts.Arena {
 		var err error
 		arena, err = ResolveArenaConfig(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("eval-agentic -arena: %w", err)
 		}
-	} else {
-		if useUnshare && !UnshareAvailable() {
-			return nil, fmt.Errorf("unshare -rn is unavailable on this machine; pass -allow-network to run anyway (marks every result untrusted)")
-		}
-		var err error
-		swept, err = Sweep(cfg.RepoPath, sandboxSweepAge)
-		if err != nil {
-			return nil, fmt.Errorf("sweeping stale sandboxes: %w", err)
-		}
+	} else if useUnshare && !UnshareAvailable() {
+		return nil, fmt.Errorf("unshare -rn is unavailable on this machine; pass -allow-network to run anyway (marks every result untrusted)")
+	}
+
+	// v1 mode's whole task set, and arena mode's judge pool, both create
+	// ephemeral worktrees of cfg.RepoPath via NewSandbox: the startup sweep
+	// runs regardless of mode.
+	swept, err := Sweep(cfg.RepoPath, sandboxSweepAge)
+	if err != nil {
+		return nil, fmt.Errorf("sweeping stale sandboxes: %w", err)
 	}
 
 	model, doReplay, err := evals.BuildRunBackend(cfg, evals.RunOptions{Backend: opts.Backend, Model: opts.Model})
@@ -122,7 +123,10 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config, opts RunOptions) (
 	}
 
 	tasks, testCmds, notGraded, err := selectAgenticTasks(db, cfg, opts.Arena)
-	if err == nil && len(opts.TaskIDs) > 0 {
+	if err != nil {
+		return nil, fmt.Errorf("selecting agentic-gradable tasks: %w", err)
+	}
+	if len(opts.TaskIDs) > 0 {
 		want := map[int64]bool{}
 		for _, id := range opts.TaskIDs {
 			want[id] = true
@@ -135,9 +139,6 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config, opts RunOptions) (
 		}
 		tasks = filtered
 	}
-	if err != nil {
-		return nil, fmt.Errorf("selecting agentic-gradable tasks: %w", err)
-	}
 
 	scheduled := evals.ScheduleTasks(tasks, cfg.Evals.LadderTrack)
 	if opts.Limit > 0 && len(scheduled) > opts.Limit {
@@ -149,90 +150,82 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config, opts RunOptions) (
 		return nil, fmt.Errorf("inserting eval run: %w", err)
 	}
 
-	ladder := evals.NewLadder(cfg.Evals)
 	bounds := BoundsFromConfig(cfg.Evals)
 	runner := CommandRunner{UseUnshare: useUnshare, Timeout: gradingTimeout}
 
 	summary := &RunSummary{
 		RunID: runID, Backend: opts.Backend, Model: model, TasksTotal: len(scheduled),
-		Ladder: nil, ByTrack: map[string]*TrackTally{}, SweptSandboxes: swept,
+		ByTrack: map[string]*TrackTally{}, SweptSandboxes: swept,
 		NotGradedNoTestCommand: notGraded, AllowNetwork: opts.AllowNetwork, Arena: opts.Arena,
 	}
+	rs := newRunState(db, runID, evals.NewLadder(cfg.Evals), opts.MaxTokens, summary)
 
-	var tokensIn, tokensOut int64
-	budgetExceeded := false
+	if opts.Arena {
+		arenaPool, judgePool := partitionArenaJudge(scheduled, testCmds)
 
-	for _, st := range scheduled {
-		task := st.Task
-
-		if budgetExceeded || !ladder.Allowed(st.Track, st.Rung) {
-			if _, err := store.InsertEvalResult(db, store.EvalResultRow{
-				EvalRunID: runID, EvalTaskID: task.ID, Mode: "agentic",
-				Error: sql.NullString{String: "ladder_skipped", Valid: true},
-			}); err != nil {
-				return nil, fmt.Errorf("recording ladder_skipped result for task %d: %w", task.ID, err)
-			}
-			summary.TasksSkipped++
-			continue
-		}
-
-		var outcome taskOutcome
-		if opts.Arena {
+		runOneArena := func(ctx context.Context, st evals.ScheduledTask) taskOutcome {
+			task := st.Task
 			env, envErr := newArenaTaskEnv(arena, task.Subsystem.String)
 			if envErr != nil {
-				outcome = taskOutcome{Error: envErr.Error()}
-			} else {
-				outcome = runOneArenaTask(ctx, cfg, doReplay, model, task, testCmds[task.ID], bounds, env)
+				return taskOutcome{Error: envErr.Error()}
 			}
-		} else {
-			outcome = runOneTask(ctx, cfg, doReplay, useUnshare, runner, model, task, testCmds[task.ID], bounds, opts.AllowNetwork)
+			return runOneArenaTask(ctx, cfg, doReplay, model, task, testCmds[task.ID], bounds, env)
+		}
+		runOneJudge := func(ctx context.Context, st evals.ScheduledTask) taskOutcome {
+			return runOneJudgeTask(ctx, cfg, doReplay, model, st.Task, bounds)
 		}
 
-		if err := store.UpdateEvalTaskAgenticReady(db, task.ID, outcome.AgenticReady); err != nil {
-			return nil, fmt.Errorf("updating agentic_ready for task %d: %w", task.ID, err)
+		parallelism := cfg.Evals.ParallelJudgeTasks
+		if parallelism <= 0 {
+			parallelism = defaultParallelJudgeTasks
 		}
 
-		row := store.EvalResultRow{
-			EvalRunID: runID, EvalTaskID: task.ID, Mode: "agentic",
-			Passed:         sql.NullInt64{Int64: boolToInt64(outcome.Passed), Valid: true},
-			Turns:          sql.NullInt64{Int64: int64(outcome.Turns), Valid: true},
-			TestsRan:       sql.NullInt64{Int64: int64(outcome.TestsRan), Valid: true},
-			TestsPassed:    sql.NullInt64{Int64: int64(outcome.TestsPassed), Valid: true},
-			Regressions:    sql.NullInt64{Int64: int64(outcome.Regressions), Valid: true},
-			TranscriptZstd: outcome.TranscriptZstd,
-			CheatFlags:     sql.NullString{String: encodeCheatFlags(outcome.CheatFlags), Valid: len(outcome.CheatFlags) > 0},
-			Error:          sql.NullString{String: outcome.Error, Valid: outcome.Error != ""},
-			JudgeVerdict:   sql.NullString{String: outcome.JudgeVerdictJSON, Valid: outcome.JudgeVerdictJSON != ""},
+		// The arena pool (strictly serial: one shared checkout) and the
+		// judge pool (bounded concurrency: each task gets its own throwaway
+		// worktree) run at the same time, so the sitting's wall time is the
+		// max of the two, not the sum.
+		var wg sync.WaitGroup
+		errs := make(chan error, 2)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if err := runSerialPool(ctx, rs, arenaPool, runOneArena); err != nil {
+				errs <- fmt.Errorf("arena pool: %w", err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if err := runConcurrentPool(ctx, rs, judgePool, parallelism, runOneJudge); err != nil {
+				errs <- fmt.Errorf("judge pool: %w", err)
+			}
+		}()
+		wg.Wait()
+		close(errs)
+		for poolErr := range errs {
+			if poolErr != nil {
+				return nil, poolErr
+			}
 		}
-		if _, err := store.InsertEvalResult(db, row); err != nil {
-			return nil, fmt.Errorf("recording eval result for task %d: %w", task.ID, err)
+	} else {
+		runOne := func(ctx context.Context, st evals.ScheduledTask) taskOutcome {
+			return runOneTask(ctx, cfg, doReplay, useUnshare, runner, model, st.Task, testCmds[st.Task.ID], bounds, opts.AllowNetwork)
 		}
-
-		tokensIn += outcome.TokensIn
-		tokensOut += outcome.TokensOut
-		ladder.Record(st.Track, st.Rung, outcome.Passed)
-		summary.TasksScored++
-		if outcome.Passed {
-			summary.TasksPassed++
-		}
-		tallyTrack(summary.ByTrack, st.Track, outcome)
-
-		if opts.MaxTokens > 0 && tokensIn+tokensOut >= opts.MaxTokens {
-			budgetExceeded = true
+		if err := runSerialPool(ctx, rs, scheduled, runOne); err != nil {
+			return nil, err
 		}
 	}
 
-	ladderSummary := ladder.Summary()
+	ladderSummary := rs.ladder.Summary()
 	ladderJSON, err := json.Marshal(ladderSummary)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling ladder summary: %w", err)
 	}
-	if err := store.UpdateEvalRunSummary(db, runID, summary.TasksScored, summary.TasksPassed, string(ladderJSON), tokensIn, tokensOut); err != nil {
+	if err := store.UpdateEvalRunSummary(db, runID, summary.TasksScored, summary.TasksPassed, string(ladderJSON), rs.tokensIn, rs.tokensOut); err != nil {
 		return nil, fmt.Errorf("updating eval run summary: %w", err)
 	}
 
-	summary.TokensIn = tokensIn
-	summary.TokensOut = tokensOut
+	summary.TokensIn = rs.tokensIn
+	summary.TokensOut = rs.tokensOut
 	summary.Ladder = ladderSummary
 	return summary, nil
 }

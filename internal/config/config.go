@@ -95,6 +95,14 @@ type EvalsConfig struct {
 	// ArenaStatusPort is the arena worktree's status API port (its
 	// PORT_STATUS), used to run a full test lane for final grading.
 	ArenaStatusPort int `toml:"arena_status_port"`
+
+	// ParallelJudgeTasks bounds how many judge-graded arena-mode tasks (no
+	// derivable test command, so nothing executes) run concurrently, each
+	// in its own ephemeral worktree of repo_path. The arena's own
+	// test-carrying tasks still run strictly serially against the shared
+	// arena checkout, since it holds exactly one commit at a time; only the
+	// judge pool parallelises. <= 0 falls back to the default of 3.
+	ParallelJudgeTasks int `toml:"parallel_judge_tasks"`
 }
 
 // ReplayConfig controls the Phase 3 replay worker.
@@ -208,6 +216,7 @@ func Default() *Config {
 			MaxAnswerTokens:          16384,
 			JudgeModel:               "claude-opus-5",
 			SeedContextBytes:         65536,
+			ParallelJudgeTasks:       3,
 		},
 		ModelCutoffs: map[string]string{},
 	}

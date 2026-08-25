@@ -1256,3 +1256,61 @@ interpretation choices:
   time limit mildly favours faster-served models; the token cap remains the
   cross-provider cost equaliser. New -tasks flag runs a targeted supplement
   so only bound-capped tasks re-sit.
+
+## 2026-08-25 arena sittings parallelise: arena stays serial, judge pool doesn't
+
+- Edward's direction: arena-mode sittings partition scheduled tasks into an
+  ARENA pool (a derivable test command: executes in the shared checkout's
+  containers, so it must stay strictly serial, one commit at a time) and a
+  JUDGE pool (no test command: nothing executes). The judge pool now runs
+  each task in its own ephemeral local worktree of `repo_path` (v1's
+  `Sandbox`/`Teardown`, `internal/agentic/sandbox.go`), never the arena
+  checkout, with bounded concurrency (new `[evals].parallel_judge_tasks`,
+  default 3) running AT THE SAME TIME as the arena pool's serial queue: a
+  sitting's wall time becomes the max of the two, not the sum. New file
+  `internal/agentic/parallel.go`: `partitionArenaJudge` (the split),
+  `runState` (mutex-guarded DB writes, ladder, token budget, summary
+  tallies shared by both pools; `evals.Ladder` itself documents that it is
+  not safe for concurrent use), `runSerialPool`/`runConcurrentPool` (the two
+  dispatch shapes, both driving the same `runOneFunc` shape so v1's own
+  single pool now also runs through `runSerialPool`, unchanged in
+  behaviour), and `runOneJudgeTask`/`judgeGradedOutcome` (the judge-graded
+  path: identical tool loop, subsystem-rooted `StripPrefix` tools,
+  working-tree diff capture, `evals.JudgeCandidateChange`, cheat detectors,
+  moved out of `runOneArenaTask`, which now requires a non-empty `testCmd`
+  and errors defensively otherwise, since the arena pool can no longer
+  contain a judge-graded task by construction).
+- **Behaviour change from "composite arena grading" (previous entry
+  above)**: that design ran the judge-graded path IN the arena and, when
+  the task's subsystem happened to map to a container, still ran the full
+  lane afterwards purely to guard against a regression. Moving judge-graded
+  tasks off the arena into their own worktrees drops that lane check for
+  them (there is no lane in an ephemeral local worktree). Only arena-pool
+  (test-carrying) tasks still get it. This is deliberate, not an oversight:
+  Edward's instruction for this change was explicit that judge-graded tasks
+  have "nothing executes" once the split takes effect, and the win (the
+  arena stops being the bottleneck for every judge-graded task in a
+  sitting) is the point of the exercise.
+- **Startup sandbox sweep now runs in arena mode too** (previously
+  `Sweep(cfg.RepoPath, ...)` only ran in non-arena mode): the judge pool
+  creates the same `splitter-agentic-*` ephemeral worktrees v1 mode does,
+  so a killed-mid-run judge task can leave one behind exactly like v1's own
+  sandbox can, and arena mode's startup needs the same cleanup.
+- **`noArenaTests` renamed `noExecTests`**: it is now the "nothing to
+  execute" `TestExecutor` for both the arena's no-container fallback and
+  every judge-pool task's tool executor (which never has a test command),
+  so the arena-specific name no longer fit.
+- Concurrency-safety tests deliberately split in two rather than one: a
+  fast, fully deterministic test
+  (`TestParallelPools_ArenaSerialJudgeConcurrentSharedBudget`) drives
+  `runSerialPool`/`runConcurrentPool` directly against fake `runOneFunc`
+  closures (a real SQLite store, no git, no HTTP) with numbers chosen so
+  arena serialism, judge concurrency, exactly-once result recording and the
+  shared budget tripping dispatch are all exact, not probabilistic (see the
+  function's own comment for the argument); a slower end-to-end test
+  (`TestRun_ArenaModeSplitsArenaAndJudgePools`) exercises `Run`'s real
+  wiring (a real target repo, a real but container-less arena worktree so
+  no Docker is needed, a fake backend) and checks worktree teardown leaves
+  nothing behind. Both pass under `-race`. Used 2 arena-pool tasks rather
+  than the task brief's suggested 1, in the deterministic test only: with a
+  single arena task there is nothing for a serialism bug to overlap with.

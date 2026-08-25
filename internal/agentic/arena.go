@@ -566,8 +566,11 @@ func newArenaTaskEnv(arena *ArenaConfig, subsystem string) (ArenaTaskEnv, error)
 		// A subsystem with no container (docs, plans, ops scripts) is
 		// still loopable: it has no test command and no lane, so the
 		// judge grades the working-tree diff and nothing executes
-		// in-container. noArenaTests refuses any accidental run.
-		return ArenaTaskEnv{ArenaPath: arena.Path, Tests: noArenaTests{}}, nil
+		// in-container. noExecTests refuses any accidental run. In
+		// practice a task with no test command is judge-graded off the
+		// arena entirely (runOneJudgeTask, parallel.go), so this path is
+		// exercised only if a future caller asks the arena for one anyway.
+		return ArenaTaskEnv{ArenaPath: arena.Path, Tests: noExecTests{}}, nil
 	}
 	lane, _ := laneForSubsystem(subsystem)
 	return ArenaTaskEnv{
@@ -582,27 +585,33 @@ func newArenaTaskEnv(arena *ArenaConfig, subsystem string) (ArenaTaskEnv, error)
 	}, nil
 }
 
-// noArenaTests is the TestExecutor for judge-graded arena tasks whose
-// subsystem has no container: there is nothing to execute, and any
-// attempt reports that plainly instead of dialling docker.
-type noArenaTests struct{}
+// noExecTests is the TestExecutor for a judge-graded task: there is
+// nothing to execute (no derivable test command), and any attempt reports
+// that plainly instead of dialling docker or running a real command. Used
+// both by newArenaTaskEnv's no-container fallback and by runOneJudgeTask's
+// ephemeral local worktree, since neither ever has a test command to run.
+type noExecTests struct{}
 
-func (noArenaTests) RunTests(ctx context.Context, dir, command string) (string, bool, error) {
+func (noExecTests) RunTests(ctx context.Context, dir, command string) (string, bool, error) {
 	return "no test environment exists for this task; changes are graded by review", false, nil
 }
 
-// runOneArenaTask runs one task's full arena lifecycle: check out
-// task.RepoHead in the shared arena worktree (restoring the original HEAD
-// afterwards, even on error), apply held-out tests, grade baseline, run the
-// tool loop against the arena's own containers, grade final (the scoped
-// held-out tests, the same fail-to-pass check as v1, plus once, the full
-// relevant lane via the arena status API), score, detect cheating. It never
-// returns a hard error: any failure is recorded in the returned outcome's
-// Error field, matching runOneTask's convention.
+// runOneArenaTask runs one arena-pool task's full arena lifecycle: check
+// out task.RepoHead in the shared arena worktree (restoring the original
+// HEAD afterwards, even on error), apply held-out tests, grade baseline,
+// run the tool loop against the arena's own containers, grade final (the
+// scoped held-out tests, the same fail-to-pass check as v1, plus once, the
+// full relevant lane via the arena status API), score, detect cheating.
+// testCmd must be non-empty: the arena pool only ever holds test-carrying
+// tasks (partitionArenaJudge, parallel.go). A task with no derivable test
+// command is judge-graded instead, off the arena entirely, by
+// runOneJudgeTask, so two tasks never contend for the one shared checkout.
+// It never returns a hard error: any failure is recorded in the returned
+// outcome's Error field, matching runOneTask's convention.
 func runOneArenaTask(ctx context.Context, cfg *config.Config, doReplay evals.ReplayFunc, model string, task store.EvalTaskRow, testCmd string, bounds TaskBounds, env ArenaTaskEnv) taskOutcome {
-	// An empty testCmd is a judge-graded task (composite grading): the
-	// loop still runs against the real checkout, run_tests declines
-	// gracefully, and the final working-tree diff goes to the judge.
+	if testCmd == "" {
+		return taskOutcome{Error: "no test command available for this task"}
+	}
 
 	sandbox, err := NewArenaSandbox(ctx, env.ArenaPath, task.RepoHead.String)
 	if err != nil {
@@ -615,12 +624,9 @@ func runOneArenaTask(ctx context.Context, cfg *config.Config, doReplay evals.Rep
 		return taskOutcome{Error: err.Error(), AgenticReady: true}
 	}
 
-	var baseline GradeResult
-	if testCmd != "" {
-		baseline, err = RunGrading(ctx, env.Tests, sandbox.Dir, testCmd)
-		if err != nil {
-			return taskOutcome{Error: "baseline grading: " + err.Error(), AgenticReady: true}
-		}
+	baseline, err := RunGrading(ctx, env.Tests, sandbox.Dir, testCmd)
+	if err != nil {
+		return taskOutcome{Error: "baseline grading: " + err.Error(), AgenticReady: true}
 	}
 
 	// Tools are rooted at the task's subsystem, not the whole monorepo:
@@ -643,10 +649,7 @@ func runOneArenaTask(ctx context.Context, cfg *config.Config, doReplay evals.Rep
 		transcriptZstd = nil
 	}
 
-	var final GradeResult
-	if testCmd != "" {
-		final, err = RunGrading(ctx, env.Tests, sandbox.Dir, testCmd)
-	}
+	final, err := RunGrading(ctx, env.Tests, sandbox.Dir, testCmd)
 	if err != nil {
 		return taskOutcome{
 			Error: "final grading: " + err.Error(), AgenticReady: true,
@@ -656,39 +659,6 @@ func runOneArenaTask(ctx context.Context, cfg *config.Config, doReplay evals.Rep
 	}
 
 	testsRan, testsPassed, _ := ScoreFailToPass(baseline, final, hc.Names)
-
-	judgeVerdictJSON := ""
-	judgePassed := false
-	if testCmd == "" {
-		diff, derr := arenaWorktreeDiff(sandbox.Dir)
-		switch {
-		case derr != nil:
-			return taskOutcome{
-				Error: "capturing candidate diff: " + derr.Error(), AgenticReady: true,
-				Turns: loopResult.Turns, TokensIn: loopResult.TokensIn, TokensOut: loopResult.TokensOut,
-				CheatFlags: exec.CheatFlags(), TranscriptZstd: transcriptZstd, ModelRanTests: exec.TestsRanByModel(),
-			}
-		case strings.TrimSpace(diff) == "":
-			judgeVerdictJSON = `{"equivalent":false,"confidence":1,"reason":"candidate made no change to the working tree"}`
-		default:
-			refJSON, rerr := store.Decompress(task.ReferenceResponseZstd)
-			if rerr != nil {
-				return taskOutcome{Error: "decompressing reference: " + rerr.Error(), AgenticReady: true}
-			}
-			verdict, jerr := evals.JudgeCandidateChange(ctx, cfg, cfg.Evals.JudgeModel, task.Brief, refJSON, diff)
-			if jerr != nil {
-				return taskOutcome{
-					Error: "judging candidate diff: " + jerr.Error(), AgenticReady: true,
-					Turns: loopResult.Turns, TokensIn: loopResult.TokensIn, TokensOut: loopResult.TokensOut,
-					CheatFlags: exec.CheatFlags(), TranscriptZstd: transcriptZstd, ModelRanTests: exec.TestsRanByModel(),
-				}
-			}
-			judgePassed = verdict.Agree()
-			if vj, merr := json.Marshal(verdict); merr == nil {
-				judgeVerdictJSON = string(vj)
-			}
-		}
-	}
 
 	regressions := 0
 	laneErrText := ""
@@ -721,22 +691,15 @@ func runOneArenaTask(ctx context.Context, cfg *config.Config, doReplay evals.Rep
 		}
 	}
 
-	// Bounds stop the loop but execution results decide the grade. Tasks
-	// with held-out tests are graded fail-to-pass; tasks without are
-	// graded by the judge over the model's actual working-tree diff. The
-	// lane guards regressions in either case when one exists.
-	var passed bool
-	if testCmd != "" {
-		passed = testsRan > 0 && testsPassed == testsRan && regressions == 0 && laneErrText == ""
-	} else {
-		passed = judgePassed && regressions == 0 && laneErrText == ""
-	}
+	// Bounds stop the loop but execution results decide the grade; the
+	// lane guards regressions when one exists.
+	passed := testsRan > 0 && testsPassed == testsRan && regressions == 0 && laneErrText == ""
 
 	return taskOutcome{
 		Passed: passed, TestsRan: testsRan, TestsPassed: testsPassed, Regressions: regressions,
 		Turns: loopResult.Turns, TokensIn: loopResult.TokensIn, TokensOut: loopResult.TokensOut,
 		CheatFlags: cheatFlags, Error: errText, TranscriptZstd: transcriptZstd, AgenticReady: true,
-		ModelRanTests: exec.TestsRanByModel(), JudgeVerdictJSON: judgeVerdictJSON,
+		ModelRanTests: exec.TestsRanByModel(),
 	}
 }
 

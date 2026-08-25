@@ -77,6 +77,7 @@ max_answer_tokens = 16384          # floors every eval request's max_tokens (rea
 seed_context_bytes = 65536         # cap on a seed-history synthesized request's total size
 # arena_path = "/home/edward/FreegleDocker-eval-arena"  # a worktree from `./freegle worktree create eval-arena`
 # arena_status_port = 12090          # that worktree's PORT_STATUS, for `eval-agentic -arena`'s full-lane grading
+parallel_judge_tasks = 3           # how many judge-graded (no test command) arena-mode tasks run concurrently
 
 [model_cutoffs]
 # family or exact model id -> training data cutoff "YYYY-MM", the eval
