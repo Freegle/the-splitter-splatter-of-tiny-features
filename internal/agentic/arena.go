@@ -195,6 +195,21 @@ const arenaHeadRestoreTimeout = 30 * time.Second
 // ArenaSandbox is one task's lease on the shared, persistent arena
 // worktree. Unlike v1's Sandbox (a fresh ephemeral worktree per task),
 // arena mode reuses the SAME checkout across every task in a run, so
+// healArena discards everything uncommitted in the arena worktree:
+// reset --hard plus clean -fd, the same repair the runbooks do, so a
+// killed sitting cannot poison the next one.
+func healArena(ctx context.Context, arenaPath string) error {
+	for _, args := range [][]string{
+		{"-C", arenaPath, "reset", "--hard", "-q"},
+		{"-C", arenaPath, "clean", "-fdq"},
+	} {
+		if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
+			return fmt.Errorf("git %v: %v: %s", args, err, out)
+		}
+	}
+	return nil
+}
+
 // NewArenaSandbox records enough of its original state (the branch it was
 // on, or its exact commit if it was already detached) to check it back out
 // afterwards.
@@ -216,7 +231,15 @@ func NewArenaSandbox(ctx context.Context, arenaPath, repoHead string) (*ArenaSan
 		return nil, fmt.Errorf("checking arena worktree cleanliness: %w", err)
 	}
 	if dirty {
-		return nil, fmt.Errorf("arena worktree %s has uncommitted changes; refusing to touch it", arenaPath)
+		// The arena is a declared, disposable eval environment, so dirt
+		// left by an interrupted sitting (a kill skips teardown defers)
+		// is healed rather than fatal: refusing turned one stale file
+		// into sixteen instant failures twice. The main-checkout guard
+		// above is what protects real work.
+		if herr := healArena(ctx, arenaPath); herr != nil {
+			return nil, fmt.Errorf("arena worktree %s is dirty and healing failed: %w", arenaPath, herr)
+		}
+		fmt.Printf("  arena had uncommitted changes from an earlier sitting; healed\n")
 	}
 
 	sha, err := gitOutput(ctx, arenaPath, "rev-parse", "HEAD")

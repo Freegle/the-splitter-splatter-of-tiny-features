@@ -1314,3 +1314,21 @@ interpretation choices:
   nothing behind. Both pass under `-race`. Used 2 arena-pool tasks rather
   than the task brief's suggested 1, in the deterministic test only: with a
   single arena task there is nothing for a serialism bug to overlap with.
+
+## 2026-08-25 two systemic fixes: rate limits and arena dirt
+
+- Opus's first arena sitting died on all 16 tasks with 400
+  "thinking.thinking: Field required": Opus returns display:omitted
+  thinking as an empty string and omitempty dropped the key when the loop
+  echoed history back. Only a thinking-on frontier model could expose this
+  (DeepSeek's path strips reasoning), and the marshaller now always emits
+  the key for thinking blocks.
+- Its second sitting died on 429s: a subscription-backed agentic sitting
+  makes hundreds of calls, so traffic shaping is expected. Complete now
+  waits out 429/529 honouring Retry-After (capped ladder, injectable
+  MaxRetries/RetryBase so tests asserting error surfacing stay fast); 5xx
+  still surfaces immediately so a real fault is not hidden behind backoff.
+- The dirty-arena refusal is now a heal: the arena is a declared
+  disposable eval checkout, and refusing turned one stale file left by a
+  killed sitting into sixteen instant failures, twice. The
+  main-checkout refusal remains the guard that protects real work.

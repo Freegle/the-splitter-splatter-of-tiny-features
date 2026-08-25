@@ -233,15 +233,32 @@ func TestResolveArenaConfig_Succeeds(t *testing.T) {
 	}
 }
 
-func TestNewArenaSandbox_RefusesDirtyArena(t *testing.T) {
+func TestNewArenaSandbox_HealsDirtyArena(t *testing.T) {
 	repoPath, commit := newAgenticTestRepo(t, map[string]string{"main.go": "package main\n"})
 	worktreeDir := newArenaTestWorktree(t, repoPath, commit, true)
 	if err := os.WriteFile(filepath.Join(worktreeDir, "main.go"), []byte("package main\n// dirty\n"), 0o644); err != nil {
 		t.Fatalf("dirtying worktree: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(worktreeDir, "stray.txt"), []byte("left behind\n"), 0o644); err != nil {
+		t.Fatalf("adding stray file: %v", err)
+	}
 
-	if _, err := NewArenaSandbox(context.Background(), worktreeDir, commit); err == nil {
-		t.Fatal("expected an error for a dirty arena worktree, got nil")
+	// The arena is disposable: dirt from an interrupted sitting (a kill
+	// skips teardown defers) is healed, not fatal. It twice turned one
+	// stale file into sixteen dead tasks. The main-checkout refusal is
+	// what protects real work.
+	sandbox, err := NewArenaSandbox(context.Background(), worktreeDir, commit)
+	if err != nil {
+		t.Fatalf("dirty arena should be healed, not refused: %v", err)
+	}
+	defer sandbox.Teardown()
+
+	out, gerr := gitOutput(context.Background(), worktreeDir, "status", "--porcelain")
+	if gerr != nil {
+		t.Fatalf("git status: %v", gerr)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("arena not healed, still dirty: %s", out)
 	}
 }
 

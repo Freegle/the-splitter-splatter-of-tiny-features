@@ -86,7 +86,9 @@ func TestAnthropicClient_Complete_ErrorBodySurfaced(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := &AnthropicClient{BaseURL: server.URL, Model: "m"}
+	// MaxRetries -1: this test asserts the error body surfaces, not the
+	// retry ladder (429 is retried in production, see retry_test.go).
+	c := &AnthropicClient{BaseURL: server.URL, Model: "m", MaxRetries: -1}
 	_, err := c.Complete(context.Background(), anthropic.MessagesRequest{})
 	if err == nil {
 		t.Fatal("expected an error for a non-2xx response")
