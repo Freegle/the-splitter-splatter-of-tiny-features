@@ -394,10 +394,21 @@ func TestArenaDockerExecArgs_NeverEmitsNetworkConnect(t *testing.T) {
 	}
 }
 
-func TestNewArenaTaskEnv_UnknownSubsystemErrors(t *testing.T) {
+func TestNewArenaTaskEnv_UnknownSubsystemIsJudgeOnly(t *testing.T) {
 	arena := &ArenaConfig{Path: "/arena", Project: "freegle-eval-arena", BaseURL: "http://localhost:1"}
-	if _, err := newArenaTaskEnv(arena, "some-unknown-subsystem"); err == nil {
-		t.Fatal("expected an error for an unknown subsystem, got nil")
+	env, err := newArenaTaskEnv(arena, "some-unknown-subsystem")
+	if err != nil {
+		t.Fatalf("container-less subsystems must be loopable (judge-graded): %v", err)
+	}
+	if env.LaneName != "" {
+		t.Fatalf("no lane expected, got %q", env.LaneName)
+	}
+	out, ok, err := env.Tests.RunTests(context.Background(), "/arena", "anything")
+	if err != nil || ok {
+		t.Fatalf("noArenaTests must decline gracefully: out=%q ok=%v err=%v", out, ok, err)
+	}
+	if !strings.Contains(out, "no test environment") {
+		t.Fatalf("unexpected decline text: %q", out)
 	}
 }
 

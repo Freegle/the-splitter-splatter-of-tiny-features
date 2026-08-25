@@ -563,7 +563,11 @@ type ArenaTaskEnv struct {
 func newArenaTaskEnv(arena *ArenaConfig, subsystem string) (ArenaTaskEnv, error) {
 	service, workdir, ok := arenaContainerFor(subsystem)
 	if !ok {
-		return ArenaTaskEnv{}, fmt.Errorf("arena mode has no container mapping for subsystem %q", subsystem)
+		// A subsystem with no container (docs, plans, ops scripts) is
+		// still loopable: it has no test command and no lane, so the
+		// judge grades the working-tree diff and nothing executes
+		// in-container. noArenaTests refuses any accidental run.
+		return ArenaTaskEnv{ArenaPath: arena.Path, Tests: noArenaTests{}}, nil
 	}
 	lane, _ := laneForSubsystem(subsystem)
 	return ArenaTaskEnv{
@@ -576,6 +580,15 @@ func newArenaTaskEnv(arena *ArenaConfig, subsystem string) (ArenaTaskEnv, error)
 		LaneName:    lane,
 		LaneTimeout: arenaLaneTimeout,
 	}, nil
+}
+
+// noArenaTests is the TestExecutor for judge-graded arena tasks whose
+// subsystem has no container: there is nothing to execute, and any
+// attempt reports that plainly instead of dialling docker.
+type noArenaTests struct{}
+
+func (noArenaTests) RunTests(ctx context.Context, dir, command string) (string, bool, error) {
+	return "no test environment exists for this task; changes are graded by review", false, nil
 }
 
 // runOneArenaTask runs one task's full arena lifecycle: check out
