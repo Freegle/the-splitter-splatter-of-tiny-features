@@ -602,9 +602,12 @@ func runOneArenaTask(ctx context.Context, cfg *config.Config, doReplay evals.Rep
 		return taskOutcome{Error: err.Error(), AgenticReady: true}
 	}
 
-	baseline, err := RunGrading(ctx, env.Tests, sandbox.Dir, testCmd)
-	if err != nil {
-		return taskOutcome{Error: "baseline grading: " + err.Error(), AgenticReady: true}
+	var baseline GradeResult
+	if testCmd != "" {
+		baseline, err = RunGrading(ctx, env.Tests, sandbox.Dir, testCmd)
+		if err != nil {
+			return taskOutcome{Error: "baseline grading: " + err.Error(), AgenticReady: true}
+		}
 	}
 
 	// Tools are rooted at the task's subsystem, not the whole monorepo:
@@ -627,7 +630,10 @@ func runOneArenaTask(ctx context.Context, cfg *config.Config, doReplay evals.Rep
 		transcriptZstd = nil
 	}
 
-	final, err := RunGrading(ctx, env.Tests, sandbox.Dir, testCmd)
+	var final GradeResult
+	if testCmd != "" {
+		final, err = RunGrading(ctx, env.Tests, sandbox.Dir, testCmd)
+	}
 	if err != nil {
 		return taskOutcome{
 			Error: "final grading: " + err.Error(), AgenticReady: true,
@@ -637,6 +643,39 @@ func runOneArenaTask(ctx context.Context, cfg *config.Config, doReplay evals.Rep
 	}
 
 	testsRan, testsPassed, _ := ScoreFailToPass(baseline, final, hc.Names)
+
+	judgeVerdictJSON := ""
+	judgePassed := false
+	if testCmd == "" {
+		diff, derr := arenaWorktreeDiff(sandbox.Dir)
+		switch {
+		case derr != nil:
+			return taskOutcome{
+				Error: "capturing candidate diff: " + derr.Error(), AgenticReady: true,
+				Turns: loopResult.Turns, TokensIn: loopResult.TokensIn, TokensOut: loopResult.TokensOut,
+				CheatFlags: exec.CheatFlags(), TranscriptZstd: transcriptZstd, ModelRanTests: exec.TestsRanByModel(),
+			}
+		case strings.TrimSpace(diff) == "":
+			judgeVerdictJSON = `{"equivalent":false,"confidence":1,"reason":"candidate made no change to the working tree"}`
+		default:
+			refJSON, rerr := store.Decompress(task.ReferenceResponseZstd)
+			if rerr != nil {
+				return taskOutcome{Error: "decompressing reference: " + rerr.Error(), AgenticReady: true}
+			}
+			verdict, jerr := evals.JudgeCandidateChange(ctx, cfg, cfg.Evals.JudgeModel, task.Brief, refJSON, diff)
+			if jerr != nil {
+				return taskOutcome{
+					Error: "judging candidate diff: " + jerr.Error(), AgenticReady: true,
+					Turns: loopResult.Turns, TokensIn: loopResult.TokensIn, TokensOut: loopResult.TokensOut,
+					CheatFlags: exec.CheatFlags(), TranscriptZstd: transcriptZstd, ModelRanTests: exec.TestsRanByModel(),
+				}
+			}
+			judgePassed = verdict.Agree()
+			if vj, merr := json.Marshal(verdict); merr == nil {
+				judgeVerdictJSON = string(vj)
+			}
+		}
+	}
 
 	regressions := 0
 	laneErrText := ""
@@ -669,15 +708,37 @@ func runOneArenaTask(ctx context.Context, cfg *config.Config, doReplay evals.Rep
 		}
 	}
 
-	// Bounds stop the loop but execution results decide the grade (see
-	// runOneTask; a budget stop with green held-out tests and a clean
-	// lane is a pass, with the bound still recorded in the error note).
-	passed := testsRan > 0 && testsPassed == testsRan && regressions == 0 && laneErrText == ""
+	// Bounds stop the loop but execution results decide the grade. Tasks
+	// with held-out tests are graded fail-to-pass; tasks without are
+	// graded by the judge over the model's actual working-tree diff. The
+	// lane guards regressions in either case when one exists.
+	var passed bool
+	if testCmd != "" {
+		passed = testsRan > 0 && testsPassed == testsRan && regressions == 0 && laneErrText == ""
+	} else {
+		passed = judgePassed && regressions == 0 && laneErrText == ""
+	}
 
 	return taskOutcome{
 		Passed: passed, TestsRan: testsRan, TestsPassed: testsPassed, Regressions: regressions,
 		Turns: loopResult.Turns, TokensIn: loopResult.TokensIn, TokensOut: loopResult.TokensOut,
 		CheatFlags: cheatFlags, Error: errText, TranscriptZstd: transcriptZstd, AgenticReady: true,
-		ModelRanTests: exec.TestsRanByModel(),
+		ModelRanTests: exec.TestsRanByModel(), JudgeVerdictJSON: judgeVerdictJSON,
 	}
+}
+
+// arenaWorktreeDiff returns the arena checkout's uncommitted diff: the
+// candidate's actual change, including new files (intent-to-add so
+// untracked files appear in the diff).
+func arenaWorktreeDiff(dir string) (string, error) {
+	add := exec.Command("git", "-C", dir, "add", "-AN")
+	if out, err := add.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git add -AN: %v: %s", err, out)
+	}
+	cmd := exec.Command("git", "-C", dir, "diff")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git diff: %w", err)
+	}
+	return string(out), nil
 }

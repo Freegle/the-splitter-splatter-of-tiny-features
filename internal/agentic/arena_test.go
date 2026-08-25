@@ -752,3 +752,39 @@ func unusedPort(t *testing.T) int {
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port
 }
+
+func TestArenaWorktreeDiffCapturesEditsAndNewFiles(t *testing.T) {
+	dir := t.TempDir()
+	mustGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	mustGit("init", "-q")
+	mustGit("config", "user.email", "t@t")
+	mustGit("config", "user.name", "t")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit("add", "-A")
+	mustGit("commit", "-q", "-m", "base")
+
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("brand new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := arenaWorktreeDiff(dir)
+	if err != nil {
+		t.Fatalf("arenaWorktreeDiff: %v", err)
+	}
+	for _, want := range []string{"-one", "+two", "new.txt", "+brand new"} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("diff missing %q:\n%s", want, diff)
+		}
+	}
+}

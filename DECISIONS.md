@@ -1232,3 +1232,14 @@ interpretation choices:
   php/go still fail at 40 with edits attempted and tests run, that is model
   behaviour, the harness is ruled out, and the Opus leg unblocks per
   Edward's gate.
+
+## 2026-08-25 composite arena grading: tests where they exist, judge otherwise
+
+- Edward: "You can use Claude to evaluate the fix. Tests are one aspect of
+  grading not the only thing." Arena sittings now loop EVERY active task:
+  held-out tests grade fail-to-pass where the commit shipped tests; where it
+  did not, the judge grades the candidate's ACTUAL working-tree diff
+  (git add -AN so new files appear, then git diff) against the shipped
+  change, with the lane suite still guarding regressions on code tasks.
+  Verdicts stored per result in judge_verdict. This lifts the arena set from
+  6 test-carrying tasks to all 16 fair tasks.

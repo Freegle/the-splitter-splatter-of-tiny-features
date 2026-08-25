@@ -117,7 +117,7 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config, opts RunOptions) (
 		return nil, err
 	}
 
-	tasks, testCmds, notGraded, err := selectAgenticTasks(db, cfg)
+	tasks, testCmds, notGraded, err := selectAgenticTasks(db, cfg, opts.Arena)
 	if err != nil {
 		return nil, fmt.Errorf("selecting agentic-gradable tasks: %w", err)
 	}
@@ -185,6 +185,7 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config, opts RunOptions) (
 			TranscriptZstd: outcome.TranscriptZstd,
 			CheatFlags:     sql.NullString{String: encodeCheatFlags(outcome.CheatFlags), Valid: len(outcome.CheatFlags) > 0},
 			Error:          sql.NullString{String: outcome.Error, Valid: outcome.Error != ""},
+			JudgeVerdict:   sql.NullString{String: outcome.JudgeVerdictJSON, Valid: outcome.JudgeVerdictJSON != ""},
 		}
 		if _, err := store.InsertEvalResult(db, row); err != nil {
 			return nil, fmt.Errorf("recording eval result for task %d: %w", task.ID, err)
@@ -252,7 +253,7 @@ func boolToInt64(b bool) int64 {
 // notGraded counts active history tasks that carry a holdout payload with
 // no derivable test command (non-Go held-out tests, see DECISIONS.md):
 // stored for future use but not selected here.
-func selectAgenticTasks(db *sql.DB, cfg *config.Config) (tasks []store.EvalTaskRow, testCmds map[int64]string, notGraded int, err error) {
+func selectAgenticTasks(db *sql.DB, cfg *config.Config, includeAll bool) (tasks []store.EvalTaskRow, testCmds map[int64]string, notGraded int, err error) {
 	testCmds = map[int64]string{}
 
 	holdoutTasks, err := store.AgenticGradableEvalTasks(db)
@@ -283,7 +284,19 @@ func selectAgenticTasks(db *sql.DB, cfg *config.Config) (tasks []store.EvalTaskR
 		return nil, nil, 0, err
 	}
 	for _, t := range active {
-		if seen[t.ID] || len(t.HoldoutTestsZstd) > 0 {
+		if seen[t.ID] {
+			continue
+		}
+		// Arena sittings loop EVERY active task: those without held-out
+		// tests are graded by the judge over the model's actual working
+		// tree diff instead (tests are the strongest grader where they
+		// exist, not the only one).
+		if includeAll {
+			tasks = append(tasks, t)
+			seen[t.ID] = true
+			continue
+		}
+		if len(t.HoldoutTestsZstd) > 0 {
 			continue
 		}
 		if !t.Subsystem.Valid || t.Subsystem.String == "" {
@@ -316,6 +329,10 @@ type taskOutcome struct {
 	// during the loop (ToolExecutor.TestsRanByModel), independent of the
 	// harness's own baseline/final grading passes.
 	ModelRanTests int
+	// JudgeVerdictJSON is the stored verdict for arena tasks without
+	// held-out tests, graded by the judge over the candidate's actual
+	// working-tree diff. Empty for test-graded tasks.
+	JudgeVerdictJSON string
 }
 
 // heldOutContext is what a history-origin task's held-out payload

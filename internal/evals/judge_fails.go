@@ -171,3 +171,34 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "\n[truncated]"
 }
+
+// JudgeCandidateChange grades one candidate change (as text, typically the
+// model's actual git diff from an arena sitting) against a task's shipped
+// reference, with the same instruction and house rules as JudgeFails.
+// Loop-based tasks without held-out tests are graded this way: tests are
+// the strongest grader where they exist, not the only one (Edward).
+func JudgeCandidateChange(ctx context.Context, cfg *config.Config, model, brief string, referenceJSON []byte, candidate string) (judge.Verdict, error) {
+	client := &backend.AnthropicClient{
+		BaseURL:   cfg.Upstream,
+		APIKeyEnv: cfg.Judge.APIKeyEnv,
+		Model:     model,
+	}
+	prompt := fmt.Sprintf("The request both changes answered:\n%s\n\nThe change that shipped:\n%s\n\nThe candidate change (a unified diff of the candidate's working tree):\n%s\n\n%s",
+		brief, truncate(stripThinking(referenceJSON), 12000), truncate(candidate, 12000), judgeFailsInstruction)
+	req := anthropic.MessagesRequest{
+		Model:     model,
+		MaxTokens: 8192,
+		Messages: []anthropic.Message{
+			{Role: "user", Content: []anthropic.ContentBlock{{Type: anthropic.BlockText, Text: prompt}}},
+		},
+	}
+	respJSON, err := client.Complete(ctx, req)
+	if err != nil {
+		return judge.Verdict{}, fmt.Errorf("judge call: %w", err)
+	}
+	verdict, err := judge.ParseVerdict(extractResponseText(respJSON))
+	if err != nil {
+		return judge.Verdict{}, fmt.Errorf("parsing judge verdict: %w", err)
+	}
+	return verdict, nil
+}

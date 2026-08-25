@@ -250,6 +250,7 @@ type EvalResultRow struct {
 	Regressions    sql.NullInt64
 	TranscriptZstd []byte
 	CheatFlags     sql.NullString
+	JudgeVerdict   sql.NullString
 }
 
 // InsertEvalResult inserts row into eval_results and returns the new row's
@@ -264,12 +265,13 @@ func InsertEvalResult(db *sql.DB, row EvalResultRow) (int64, error) {
 	res, err := db.Exec(`
 INSERT INTO eval_results (
   eval_run_id, eval_task_id, passed, stage, similarity, response_zstd, error,
-  mode, turns, tests_ran, tests_passed, regressions, transcript_zstd, cheat_flags
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  mode, turns, tests_ran, tests_passed, regressions, transcript_zstd, cheat_flags,
+  judge_verdict
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.EvalRunID, row.EvalTaskID, row.Passed, row.Stage, row.Similarity,
 		nilIfEmptyBytes(row.ResponseZstd), row.Error,
 		mode, row.Turns, row.TestsRan, row.TestsPassed, row.Regressions,
-		nilIfEmptyBytes(row.TranscriptZstd), row.CheatFlags,
+		nilIfEmptyBytes(row.TranscriptZstd), row.CheatFlags, row.JudgeVerdict,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("inserting eval result for task %d: %w", row.EvalTaskID, err)
