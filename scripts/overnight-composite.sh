@@ -9,6 +9,18 @@ exec > >(tee -a "$LOG") 2>&1
 # Wait for any in-flight splitter run to finish (single-writer policy).
 while pgrep -x splitter > /dev/null; do sleep 30; done
 
+# The idle-stack sweeper stops arena containers after an hour idle; bring
+# them back and wait for the status API before any leg starts.
+ARENA=/home/edward/FreegleDocker-eval-arena
+(cd "$ARENA" && docker-compose start) || (cd "$ARENA" && docker-compose up -d)
+PORT=$(grep -E '^PORT_STATUS=' "$ARENA/.env" | cut -d= -f2)
+echo "== waiting for arena status API on :$PORT"
+for i in $(seq 1 120); do
+  curl -sf --max-time 5 "http://localhost:$PORT/" > /dev/null && break
+  sleep 10
+done
+curl -sf --max-time 5 "http://localhost:$PORT/" > /dev/null || { echo "FATAL: arena API never came back"; exit 1; }
+
 set -a; source "$HOME/.config/splitter/env"; set +a
 OAT=$(python3 - << 'PY'
 import json, time, os
