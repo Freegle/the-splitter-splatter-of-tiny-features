@@ -1220,3 +1220,15 @@ interpretation choices:
   execution results decide, the bound is recorded as a note; (3) default
   per-task budget 200k -> 600k. Opus's arena leg stays gated (Edward) until
   a DeepSeek re-sit under the fixed harness looks sane.
+
+## 2026-08-25 second arena leg: turns now bind, raised to 40
+
+- Re-sit under the fixed harness: DeepSeek 3/6, and the three passes are the
+  Vue tasks with held-out specs going green and no regressions: the first
+  execution-proven result of the whole exercise. All three fails were
+  "exceeded max_turns (20)": the Vue tasks converged in 13-16 turns, but on
+  php the model spent every turn exploring without one edit or test run.
+  Default max_turns raised 20 -> 40 (token budget still caps cost); if
+  php/go still fail at 40 with edits attempted and tests run, that is model
+  behaviour, the harness is ruled out, and the Opus leg unblocks per
+  Edward's gate.

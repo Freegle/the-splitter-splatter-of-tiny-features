@@ -202,7 +202,7 @@ func Default() *Config {
 			StopWilsonUpper:          0.2,
 			StopMinN:                 8,
 			FutilityConsecutiveFails: 6,
-			MaxTurns:                 20,
+			MaxTurns:                 40,
 			MaxTaskTokens:            600000,
 			WallClockMinutes:         10,
 			MaxAnswerTokens:          16384,
