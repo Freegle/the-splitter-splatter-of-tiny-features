@@ -47,6 +47,10 @@ type RunOptions struct {
 	// arena_status_port, instead of v1's ephemeral, unshare-network-denied
 	// worktree sandbox.
 	Arena bool
+	// TaskIDs, when non-empty, restricts the run to exactly these task
+	// ids: a targeted supplement (re-sitting bound-capped tasks under new
+	// limits) instead of a full re-run.
+	TaskIDs []int64
 }
 
 // TrackTally is one ladder track's agentic outcome tally, the scorecard
@@ -118,6 +122,19 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config, opts RunOptions) (
 	}
 
 	tasks, testCmds, notGraded, err := selectAgenticTasks(db, cfg, opts.Arena)
+	if err == nil && len(opts.TaskIDs) > 0 {
+		want := map[int64]bool{}
+		for _, id := range opts.TaskIDs {
+			want[id] = true
+		}
+		filtered := tasks[:0]
+		for _, t := range tasks {
+			if want[t.ID] {
+				filtered = append(filtered, t)
+			}
+		}
+		tasks = filtered
+	}
 	if err != nil {
 		return nil, fmt.Errorf("selecting agentic-gradable tasks: %w", err)
 	}

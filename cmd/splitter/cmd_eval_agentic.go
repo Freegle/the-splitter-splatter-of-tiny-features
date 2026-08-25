@@ -12,6 +12,8 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/freegle/splitter/internal/agentic"
 )
@@ -28,6 +30,7 @@ func runEvalAgentic(args []string) error {
 	limit := fs.Int("limit", 0, "maximum agentic-gradable tasks to attempt this run (0 = no limit)")
 	allowNetwork := fs.Bool("allow-network", false, "skip unshare -rn network denial; marks every result untrusted (debugging, or the only way to run when unshare is unavailable)")
 	maxTokens := fs.Int64("max-tokens", 0, "hard-cap total tokens_in+tokens_out for this run (0 = no cap)")
+	tasksFlag := fs.String("tasks", "", "comma-separated task ids: run only these (a targeted supplement, e.g. re-sitting bound-capped tasks under new limits)")
 	arena := fs.Bool("arena", false, "arena mode: run against [evals].arena_path's real FreegleDocker containers instead of an ephemeral local sandbox (DESIGN.md \"Agentic eval v2\"); refuses to start if the arena worktree or its status API is not available")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -42,8 +45,20 @@ func runEvalAgentic(args []string) error {
 	}
 	defer db.Close()
 
+	var taskIDs []int64
+	if *tasksFlag != "" {
+		for _, part := range strings.Split(*tasksFlag, ",") {
+			id, perr := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
+			if perr != nil {
+				return fmt.Errorf("-tasks: %q is not a task id", part)
+			}
+			taskIDs = append(taskIDs, id)
+		}
+	}
+
 	summary, err := agentic.Run(context.Background(), db, cfg, agentic.RunOptions{
 		Backend: *backendFlag, Model: *modelFlag, Limit: *limit, AllowNetwork: *allowNetwork, MaxTokens: *maxTokens, Arena: *arena,
+		TaskIDs: taskIDs,
 	})
 	if err != nil {
 		return fmt.Errorf("running agentic eval: %w", err)

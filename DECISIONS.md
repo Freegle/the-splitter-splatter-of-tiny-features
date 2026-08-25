@@ -1243,3 +1243,16 @@ interpretation choices:
   change, with the lane suite still guarding regressions on code tasks.
   Verdicts stored per result in judge_verdict. This lifts the arena set from
   6 test-carrying tasks to all 16 fair tasks.
+
+## 2026-08-25 patience is time, not turns
+
+- Edward: "40 turn cap limit. Not sure this is fair. Lots of quick and cheap
+  turns for docs might be fine if result is a pass. Time limit better?" And:
+  do not rerun the whole sitting. Turn caps measure API round-trips, which
+  proxy neither cost (the token cap does) nor patience (wall clock does),
+  and they bound first for legitimately turn-y work like doc editing.
+  Defaults now: wall_clock 20 loop-minutes (patience), max_turns 150
+  (runaway backstop only), token cap unchanged (cost). Recorded caveat: a
+  time limit mildly favours faster-served models; the token cap remains the
+  cross-provider cost equaliser. New -tasks flag runs a targeted supplement
+  so only bound-capped tasks re-sit.
