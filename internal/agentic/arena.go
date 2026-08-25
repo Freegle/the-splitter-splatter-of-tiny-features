@@ -600,9 +600,9 @@ func (noArenaTests) RunTests(ctx context.Context, dir, command string) (string, 
 // returns a hard error: any failure is recorded in the returned outcome's
 // Error field, matching runOneTask's convention.
 func runOneArenaTask(ctx context.Context, cfg *config.Config, doReplay evals.ReplayFunc, model string, task store.EvalTaskRow, testCmd string, bounds TaskBounds, env ArenaTaskEnv) taskOutcome {
-	if testCmd == "" {
-		return taskOutcome{Error: "no test command available for this task"}
-	}
+	// An empty testCmd is a judge-graded task (composite grading): the
+	// loop still runs against the real checkout, run_tests declines
+	// gracefully, and the final working-tree diff goes to the judge.
 
 	sandbox, err := NewArenaSandbox(ctx, env.ArenaPath, task.RepoHead.String)
 	if err != nil {
