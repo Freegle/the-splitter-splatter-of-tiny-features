@@ -91,7 +91,23 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 	if len(b.Raw) > 0 {
 		return b.Raw, nil
 	}
-	return json.Marshal(contentBlockAlias(b))
+	out, err := json.Marshal(contentBlockAlias(b))
+	if err != nil || b.Type != "thinking" {
+		return out, err
+	}
+	// A thinking block must always carry its "thinking" key when echoed
+	// back to the API, even when display:omitted returned it as an empty
+	// string: omitempty drops it and the API rejects the turn with 400
+	// "thinking.thinking: Field required" (seen live, the first Opus
+	// arena sitting died on every task's second turn).
+	var m map[string]json.RawMessage
+	if uerr := json.Unmarshal(out, &m); uerr != nil {
+		return out, nil
+	}
+	if _, ok := m["thinking"]; !ok {
+		m["thinking"] = json.RawMessage(`""`)
+	}
+	return json.Marshal(m)
 }
 
 // Message is one turn in MessagesRequest.Messages. Content is normalised to
