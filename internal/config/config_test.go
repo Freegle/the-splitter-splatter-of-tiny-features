@@ -290,8 +290,8 @@ func TestLoad_ExampleConfigParses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load(config.example.toml): %v", err)
 	}
-	if len(cfg.Backends) != 5 {
-		t.Errorf("len(Backends) = %d, want 5", len(cfg.Backends))
+	if len(cfg.Backends) != 6 {
+		t.Errorf("len(Backends) = %d, want 6", len(cfg.Backends))
 	}
 	for _, name := range []string{"ollama", "together", "gemini", "openai", "deepseek"} {
 		if _, ok := cfg.Backends[name]; !ok {
