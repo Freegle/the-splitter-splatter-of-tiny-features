@@ -1332,3 +1332,16 @@ interpretation choices:
   disposable eval checkout, and refusing turned one stale file left by a
   killed sitting into sixteen instant failures, twice. The
   main-checkout refusal remains the guard that protects real work.
+
+## 2026-08-26 GLM wired; rate-limit retry belonged on both clients
+
+- z.ai (Zhipu) GLM wired as [backends.glm], validated across glm-5, 5.2,
+  5.3, 4.7 and 4.6 on the OpenAI-compatible path (and its
+  Anthropic-compatible surface at /api/anthropic, unused for now since the
+  translation layer already handles OpenAI shape). Edward: use glm-5.3.
+- GLM's first sitting lost nine tasks to 429s: the 429/529 wait-out added
+  earlier lived only on the Anthropic client, while the concurrent judge
+  pool drove three-wide traffic through the OpenAI-compatible one. The same
+  retry (Retry-After honoured, capped ladder, injectable for tests) now
+  covers both, and parallel_judge_tasks is dropped to 2 so a hosted
+  backend's per-minute allowance is not the binding constraint.

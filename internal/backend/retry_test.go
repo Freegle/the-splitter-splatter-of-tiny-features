@@ -59,3 +59,35 @@ func TestRetryAfterDelayFallsBackToBackoff(t *testing.T) {
 		t.Fatalf("header ignored: %v", d)
 	}
 }
+
+func TestOpenAICompatibleClientWaitsOutRateLimit(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(429)
+			w.Write([]byte(`{"error":{"message":"Rate limit reached for requests"}}`))
+			return
+		}
+		var got map[string]any
+		json.NewDecoder(r.Body).Decode(&got)
+		if got["model"] != "glm-5.3" {
+			t.Errorf("retry lost or mangled the body: %v", got)
+		}
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, Model: "glm-5.3"}
+	resp, err := c.Complete(context.Background(), &ChatRequest{Model: "ignored"})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected one retry, got %d calls", calls)
+	}
+	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content != "ok" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}

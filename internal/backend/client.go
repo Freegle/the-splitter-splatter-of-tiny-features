@@ -32,6 +32,12 @@ type Client struct {
 	BaseURL   string
 	APIKeyEnv string
 	Model     string
+	// MaxRetries bounds how many retryable statuses (429/529) Complete
+	// waits out; 0 uses the shared default, negative disables retrying
+	// (tests asserting error surfacing).
+	MaxRetries int
+	// RetryBase scales the backoff ladder; 0 uses 15s.
+	RetryBase time.Duration
 }
 
 // Complete sends req as a non-streaming POST to {BaseURL}/chat/completions,
@@ -40,6 +46,17 @@ type Client struct {
 // response is returned as an error that includes the upstream status and,
 // when the body is JSON-shaped as an OpenAI style error object, its decoded
 // message.
+func (c *Client) maxRetries() int {
+	switch {
+	case c.MaxRetries < 0:
+		return 0
+	case c.MaxRetries == 0:
+		return anthropicMaxRetries
+	default:
+		return c.MaxRetries
+	}
+}
+
 func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 	sendReq := *req
 	sendReq.Model = c.Model
@@ -62,19 +79,39 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 		httpReq.Header.Set("Authorization", "Bearer "+key)
 	}
 
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("calling %s: %w", url, err)
-	}
-	defer resp.Body.Close()
+	// Hosted backends rate-limit an agentic sitting's call volume (z.ai
+	// returned 429 for nine tasks straight when the judge pool ran three
+	// wide), so traffic shaping is waited out here exactly as it is on the
+	// Anthropic path. A 5xx still surfaces immediately.
+	var respBody []byte
+	for attempt := 0; ; attempt++ {
+		httpReq.Body = io.NopCloser(bytes.NewReader(body))
+		httpReq.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body from %s: %w", url, err)
-	}
+		resp, derr := http.DefaultClient.Do(httpReq)
+		if derr != nil {
+			return nil, fmt.Errorf("calling %s: %w", url, derr)
+		}
+		respBody, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("reading response body from %s: %w", url, err)
+		}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("backend %s returned status %d: %s", url, resp.StatusCode, extractErrorMessage(respBody))
+		retryable := resp.StatusCode == 429 || resp.StatusCode == 529
+		if !retryable || attempt >= c.maxRetries() {
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				return nil, fmt.Errorf("backend %s returned status %d: %s", url, resp.StatusCode, extractErrorMessage(respBody))
+			}
+			break
+		}
+
+		wait := retryAfterDelay(resp.Header.Get("Retry-After"), attempt, c.RetryBase)
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("waiting out status %d from %s: %w", resp.StatusCode, url, ctx.Err())
+		case <-time.After(wait):
+		}
 	}
 
 	var chatResp ChatResponse
