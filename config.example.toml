@@ -122,4 +122,4 @@ parallel_judge_tasks = 3           # how many judge-graded (no test command) are
 [backends.glm]
 base_url = "https://api.z.ai/api/paas/v4"
 api_key_env = "GLM_API_KEY"
-model = "glm-5"
+model = "glm-5.3"
