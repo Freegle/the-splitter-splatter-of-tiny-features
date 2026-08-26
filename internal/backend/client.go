@@ -15,7 +15,12 @@ import (
 // requestTimeout bounds every backend HTTP call, replay or eval alike:
 // local models under load and batch-style backends can be slow, but a
 // single request must never hang the caller indefinitely.
-const requestTimeout = 5 * time.Minute
+// 20 minutes, not 5: a deep-reasoning frontier model answering with a
+// large agentic context has exceeded 5 minutes in a single call (task 12,
+// Opus re-sitting, died on "context deadline exceeded" after looping
+// fine for 32 turns). The bound exists to stop a hung connection, and 20
+// minutes still does that.
+const requestTimeout = 20 * time.Minute
 
 // Client is an OpenAI-compatible chat completions client, sufficient for
 // ollama, together, gemini and openai (all expose POST
