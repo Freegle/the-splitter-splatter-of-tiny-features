@@ -46,6 +46,26 @@ type Client struct {
 // response is returned as an error that includes the upstream status and,
 // when the body is JSON-shaped as an OpenAI style error object, its decoded
 // message.
+// isBalanceExhausted reports whether an error body says the account is out
+// of credit rather than going too fast. Providers disagree on the status
+// code (DeepSeek uses 402, z.ai uses 429 with code 1113), so the body is
+// what settles it.
+func isBalanceExhausted(body []byte) bool {
+	lower := strings.ToLower(string(body))
+	for _, marker := range []string{
+		"insufficient balance",
+		"no resource package",
+		"quota exceeded",
+		"billing",
+		"\"1113\"",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Client) maxRetries() int {
 	switch {
 	case c.MaxRetries < 0:
@@ -98,7 +118,11 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 			return nil, fmt.Errorf("reading response body from %s: %w", url, err)
 		}
 
-		retryable := resp.StatusCode == 429 || resp.StatusCode == 529
+		// z.ai reports an empty balance as 429 with code 1113, so a
+		// wallet problem looked exactly like throttling and every task
+		// sat through the whole backoff ladder before failing. Money
+		// problems fail fast and say so.
+		retryable := (resp.StatusCode == 429 || resp.StatusCode == 529) && !isBalanceExhausted(respBody)
 		if !retryable || attempt >= c.maxRetries() {
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 				return nil, fmt.Errorf("backend %s returned status %d: %s", url, resp.StatusCode, extractErrorMessage(respBody))

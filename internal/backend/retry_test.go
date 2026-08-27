@@ -91,3 +91,43 @@ func TestOpenAICompatibleClientWaitsOutRateLimit(t *testing.T) {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 }
+
+func TestBalanceExhaustionFailsFast(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(429)
+		w.Write([]byte(`{"error":{"code":"1113","message":"Insufficient balance or no resource package. Please recharge."}}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, Model: "glm-5.3"}
+	start := time.Now()
+	_, err := c.Complete(context.Background(), &ChatRequest{})
+	if err == nil {
+		t.Fatal("expected an error when the account has no balance")
+	}
+	if calls != 1 {
+		t.Fatalf("an empty wallet must not be retried: %d calls", calls)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatal("balance exhaustion should fail fast, not wait out a backoff ladder")
+	}
+	if !strings.Contains(err.Error(), "Insufficient balance") {
+		t.Fatalf("error should carry the provider's message: %v", err)
+	}
+}
+
+func TestIsBalanceExhausted(t *testing.T) {
+	cases := map[string]bool{
+		`{"error":{"code":"1113","message":"Insufficient balance"}}`: true,
+		`{"error":{"message":"no resource package"}}`:                true,
+		`{"error":{"message":"Rate limit reached for requests"}}`:    false,
+		`{"error":{"message":"too many requests, slow down"}}`:       false,
+	}
+	for body, want := range cases {
+		if got := isBalanceExhausted([]byte(body)); got != want {
+			t.Errorf("isBalanceExhausted(%s) = %v, want %v", body, got, want)
+		}
+	}
+}

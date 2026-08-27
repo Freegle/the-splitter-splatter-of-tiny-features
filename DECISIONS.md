@@ -1345,3 +1345,16 @@ interpretation choices:
   retry (Retry-After honoured, capped ladder, injectable for tests) now
   covers both, and parallel_judge_tasks is dropped to 2 so a hosted
   backend's per-minute allowance is not the binding constraint.
+
+## 2026-08-27 an empty wallet is not a rate limit
+
+- GLM's second sitting lost all 16 tasks: four burned the token budget at
+  56 to 97 turns (it is markedly more verbose than either other model,
+  which is itself a finding) and twelve sat through the full 429 backoff
+  ladder before failing. The 429s were not throttling: z.ai reports an
+  exhausted balance as 429 with code 1113, so a money problem was
+  indistinguishable from traffic shaping and cost 20+ minutes per task.
+  Error bodies now decide: insufficient balance, no resource package, quota
+  or billing markers fail fast with the provider's own message, while
+  genuine throttling still waits. Providers disagree on the code (DeepSeek
+  uses 402, z.ai 429), so the body is the only reliable signal.
