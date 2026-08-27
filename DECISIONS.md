@@ -1358,3 +1358,17 @@ interpretation choices:
   or billing markers fail fast with the provider's own message, while
   genuine throttling still waits. Providers disagree on the code (DeepSeek
   uses 402, z.ai 429), so the body is the only reliable signal.
+
+## 2026-08-27 GLM 5.3 abandoned: it thrashes
+
+- Edward: "give up on glm. if it does that identical grep that's its bug not
+  ours." GLM 5.3's arena sitting produced 11 scored tasks, zero passes, and
+  roughly $5 of spend. The transcripts show why: on one docs task it issued
+  202 greps and 4 reads with no edits at all, the SAME grep repeated 88
+  times and a second one 87 times, running 50 to 109 turns per task until
+  the token budget stopped it. That is a model-side loop, not a harness
+  limitation, so GLM is out of the comparison. The backend stays wired
+  (config comment records why) in case a later version is worth a retest.
+  Deliberately NOT adding harness thrash-detection for this: the runaway is
+  the model's failure to make progress and the token cap already bounds the
+  cost, so a detector would only make a broken model look tidier.
