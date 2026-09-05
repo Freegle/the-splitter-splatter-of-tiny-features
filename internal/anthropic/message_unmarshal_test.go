@@ -8,9 +8,9 @@ import (
 
 func TestContentBlock_UnmarshalJSON_HappyPath(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  string
-		want   ContentBlock
+		name  string
+		input string
+		want  ContentBlock
 	}{
 		{
 			name:  "text block",
