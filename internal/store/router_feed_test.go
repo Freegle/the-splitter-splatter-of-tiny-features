@@ -31,9 +31,9 @@ func TestDecidedVerificationsForRouter(t *testing.T) {
 		tru := true
 		fal := false
 
-		insertJudgeFixture(t, db, &tru)  // decided: agree=true
-		insertJudgeFixture(t, db, &fal)  // decided: agree=false
-		insertJudgeFixture(t, db, nil)   // undecided: agree=NULL
+		insertJudgeFixture(t, db, &tru) // decided: agree=true
+		insertJudgeFixture(t, db, &fal) // decided: agree=false
+		insertJudgeFixture(t, db, nil)  // undecided: agree=NULL
 
 		rows, err := DecidedVerificationsForRouter(db)
 		if err != nil {
@@ -81,42 +81,42 @@ func TestTrustedEvalResultsForRouter(t *testing.T) {
 		}
 
 		taskIDDefault := mustInsertEvalTask(t, db, EvalTaskRow{
-			CreatedTS:     "2026-08-24T00:00:00Z", Brief: "task with empty fields", Origin: "manual",
+			CreatedTS: "2026-08-24T00:00:00Z", Brief: "task with empty fields", Origin: "manual",
 			TurnType:      sql.NullString{}, // empty -> "other"
 			FrontierModel: sql.NullString{}, // empty -> "human"
 			RequestZstd:   []byte("x"),
 		})
 
 		taskIDReal := mustInsertEvalTask(t, db, EvalTaskRow{
-			CreatedTS:     "2026-08-24T00:00:00Z", Brief: "task with real fields", Origin: "manual",
+			CreatedTS: "2026-08-24T00:00:00Z", Brief: "task with real fields", Origin: "manual",
 			TurnType:      sql.NullString{String: "multi_file_edit", Valid: true},
 			FrontierModel: sql.NullString{String: "gemini-2.5-pro", Valid: true},
 			RequestZstd:   []byte("x"),
 		})
 
 		taskIDError := mustInsertEvalTask(t, db, EvalTaskRow{
-			CreatedTS:     "2026-08-24T00:00:00Z", Brief: "task with error", Origin: "manual",
+			CreatedTS: "2026-08-24T00:00:00Z", Brief: "task with error", Origin: "manual",
 			TurnType:      sql.NullString{String: "single_file_edit", Valid: true},
 			FrontierModel: sql.NullString{String: "claude-3.5", Valid: true},
 			RequestZstd:   []byte("x"),
 		})
 
 		taskIDCheat := mustInsertEvalTask(t, db, EvalTaskRow{
-			CreatedTS:     "2026-08-24T00:00:00Z", Brief: "task with cheat flags", Origin: "manual",
+			CreatedTS: "2026-08-24T00:00:00Z", Brief: "task with cheat flags", Origin: "manual",
 			TurnType:      sql.NullString{String: "single_file_edit", Valid: true},
 			FrontierModel: sql.NullString{String: "claude-3.5", Valid: true},
 			RequestZstd:   []byte("x"),
 		})
 
 		taskIDPassedNull := mustInsertEvalTask(t, db, EvalTaskRow{
-			CreatedTS:     "2026-08-24T00:00:00Z", Brief: "task with passed null", Origin: "manual",
+			CreatedTS: "2026-08-24T00:00:00Z", Brief: "task with passed null", Origin: "manual",
 			TurnType:      sql.NullString{String: "single_file_edit", Valid: true},
 			FrontierModel: sql.NullString{String: "claude-3.5", Valid: true},
 			RequestZstd:   []byte("x"),
 		})
 
 		taskIDToolUse := mustInsertEvalTask(t, db, EvalTaskRow{
-			CreatedTS:     "2026-08-24T00:00:00Z", Brief: "task with empty cheat flags string", Origin: "manual",
+			CreatedTS: "2026-08-24T00:00:00Z", Brief: "task with empty cheat flags string", Origin: "manual",
 			TurnType:      sql.NullString{String: "tool_use", Valid: true},
 			FrontierModel: sql.NullString{String: "llama-3.1", Valid: true},
 			RequestZstd:   []byte("x"),
@@ -124,7 +124,7 @@ func TestTrustedEvalResultsForRouter(t *testing.T) {
 
 		// Qualifying: empty turn_type/frontier_model, passed=1, no error, cheat_flags='[]'
 		_, err = InsertEvalResult(db, EvalResultRow{
-			EvalRunID:    runID, EvalTaskID: taskIDDefault,
+			EvalRunID: runID, EvalTaskID: taskIDDefault,
 			Passed:       sql.NullInt64{Int64: 1, Valid: true},
 			Stage:        sql.NullString{String: "unit", Valid: true},
 			Error:        sql.NullString{},
@@ -137,7 +137,7 @@ func TestTrustedEvalResultsForRouter(t *testing.T) {
 
 		// Qualifying: real values, passed=1, no error, no cheat_flags
 		_, err = InsertEvalResult(db, EvalResultRow{
-			EvalRunID:    runID, EvalTaskID: taskIDReal,
+			EvalRunID: runID, EvalTaskID: taskIDReal,
 			Passed:       sql.NullInt64{Int64: 1, Valid: true},
 			Stage:        sql.NullString{String: "unit", Valid: true},
 			Error:        sql.NullString{},
@@ -150,7 +150,7 @@ func TestTrustedEvalResultsForRouter(t *testing.T) {
 
 		// Excluded: error set to non-empty string
 		_, err = InsertEvalResult(db, EvalResultRow{
-			EvalRunID:    runID, EvalTaskID: taskIDError,
+			EvalRunID: runID, EvalTaskID: taskIDError,
 			Passed:       sql.NullInt64{Int64: 1, Valid: true},
 			Stage:        sql.NullString{String: "unit", Valid: true},
 			Error:        sql.NullString{String: "boom", Valid: true},
@@ -163,7 +163,7 @@ func TestTrustedEvalResultsForRouter(t *testing.T) {
 
 		// Excluded: cheat_flags = '[cheat]' (non-empty, not '[]')
 		_, err = InsertEvalResult(db, EvalResultRow{
-			EvalRunID:    runID, EvalTaskID: taskIDCheat,
+			EvalRunID: runID, EvalTaskID: taskIDCheat,
 			Passed:       sql.NullInt64{Int64: 1, Valid: true},
 			Stage:        sql.NullString{String: "unit", Valid: true},
 			Error:        sql.NullString{},
@@ -176,7 +176,7 @@ func TestTrustedEvalResultsForRouter(t *testing.T) {
 
 		// Excluded: passed IS NULL
 		_, err = InsertEvalResult(db, EvalResultRow{
-			EvalRunID:    runID, EvalTaskID: taskIDPassedNull,
+			EvalRunID: runID, EvalTaskID: taskIDPassedNull,
 			Passed:       sql.NullInt64{}, // NULL
 			Stage:        sql.NullString{String: "unit", Valid: true},
 			Error:        sql.NullString{},
@@ -189,7 +189,7 @@ func TestTrustedEvalResultsForRouter(t *testing.T) {
 
 		// Qualifying: empty string cheat_flags, passed=1, no error
 		_, err = InsertEvalResult(db, EvalResultRow{
-			EvalRunID:    runID, EvalTaskID: taskIDToolUse,
+			EvalRunID: runID, EvalTaskID: taskIDToolUse,
 			Passed:       sql.NullInt64{Int64: 1, Valid: true},
 			Stage:        sql.NullString{String: "unit", Valid: true},
 			Error:        sql.NullString{},
