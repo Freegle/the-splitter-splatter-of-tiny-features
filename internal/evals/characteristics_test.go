@@ -314,3 +314,57 @@ func TestParseCharacteristics_EmptyIsZeroValue(t *testing.T) {
 		t.Errorf("ParseCharacteristics(\"\") should be the zero value, got %+v", c)
 	}
 }
+
+func TestSetEvidence(t *testing.T) {
+	t.Run("nil evidence creates map and stores entry", func(t *testing.T) {
+		c := &Characteristics{}
+		c.setEvidence("nature", "subject keyword \"fix\"")
+		if c.Evidence == nil {
+			t.Fatal("expected Evidence map to be created, got nil")
+		}
+		if len(c.Evidence) != 1 {
+			t.Fatalf("expected map length 1, got %d", len(c.Evidence))
+		}
+		if c.Evidence["nature"] != "subject keyword \"fix\"" {
+			t.Errorf("evidence[nature] = %q, want %q", c.Evidence["nature"], "subject keyword \"fix\"")
+		}
+	})
+
+	t.Run("second call with different dimension adds to map", func(t *testing.T) {
+		c := &Characteristics{}
+		c.setEvidence("nature", "subject keyword \"fix\"")
+		c.setEvidence("framework", "go-gorm")
+		if len(c.Evidence) != 2 {
+			t.Fatalf("expected map length 2, got %d", len(c.Evidence))
+		}
+		if c.Evidence["nature"] != "subject keyword \"fix\"" {
+			t.Errorf("evidence[nature] = %q, want %q", c.Evidence["nature"], "subject keyword \"fix\"")
+		}
+		if c.Evidence["framework"] != "go-gorm" {
+			t.Errorf("evidence[framework] = %q, want %q", c.Evidence["framework"], "go-gorm")
+		}
+	})
+
+	t.Run("second call with same dimension overwrites value", func(t *testing.T) {
+		c := &Characteristics{}
+		c.setEvidence("nature", "subject keyword \"fix\"")
+		c.setEvidence("nature", "subject keyword \"bug\"")
+		if len(c.Evidence) != 1 {
+			t.Fatalf("expected map length 1, got %d", len(c.Evidence))
+		}
+		if c.Evidence["nature"] != "subject keyword \"bug\"" {
+			t.Errorf("evidence[nature] = %q, want %q", c.Evidence["nature"], "subject keyword \"bug\"")
+		}
+	})
+
+	t.Run("empty dimension and empty why are stored as given", func(t *testing.T) {
+		c := &Characteristics{}
+		c.setEvidence("", "")
+		if len(c.Evidence) != 1 {
+			t.Fatalf("expected map length 1, got %d", len(c.Evidence))
+		}
+		if c.Evidence[""] != "" {
+			t.Errorf("evidence[\"\"] = %q, want %q", c.Evidence[""], "")
+		}
+	})
+}
