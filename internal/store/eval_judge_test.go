@@ -133,7 +133,7 @@ func TestFailedUnjudgedEvalResults(t *testing.T) {
 
 	// Qualifying row: passed=1, stage="unit" (not exact), error empty/NULL, judge_verdict empty/NULL, response non-nil.
 	_, err = InsertEvalResult(db, EvalResultRow{
-		EvalRunID:    runID, EvalTaskID: taskID,
+		EvalRunID: runID, EvalTaskID: taskID,
 		Passed:       sql.NullInt64{Int64: 1, Valid: true},
 		Stage:        sql.NullString{String: "unit", Valid: true},
 		Error:        sql.NullString{}, // empty string -> NULL in DB logic
@@ -150,7 +150,7 @@ func TestFailedUnjudgedEvalResults(t *testing.T) {
 		RequestZstd: []byte("x"),
 	})
 	_, err = InsertEvalResult(db, EvalResultRow{
-		EvalRunID:    runID, EvalTaskID: taskID2,
+		EvalRunID: runID, EvalTaskID: taskID2,
 		Passed:       sql.NullInt64{Int64: 1, Valid: true},
 		Stage:        sql.NullString{String: "exact", Valid: true},
 		Error:        sql.NullString{},
@@ -167,7 +167,7 @@ func TestFailedUnjudgedEvalResults(t *testing.T) {
 		RequestZstd: []byte("x"),
 	})
 	_, err = InsertEvalResult(db, EvalResultRow{
-		EvalRunID:    runID, EvalTaskID: taskID3,
+		EvalRunID: runID, EvalTaskID: taskID3,
 		Passed:       sql.NullInt64{Int64: 1, Valid: true},
 		Stage:        sql.NullString{String: "unit", Valid: true},
 		Error:        sql.NullString{String: "boom", Valid: true},
@@ -184,7 +184,7 @@ func TestFailedUnjudgedEvalResults(t *testing.T) {
 		RequestZstd: []byte("x"),
 	})
 	_, err = InsertEvalResult(db, EvalResultRow{
-		EvalRunID:    runID, EvalTaskID: taskID4,
+		EvalRunID: runID, EvalTaskID: taskID4,
 		Passed:       sql.NullInt64{Int64: 1, Valid: true},
 		Stage:        sql.NullString{String: "unit", Valid: true},
 		Error:        sql.NullString{},
